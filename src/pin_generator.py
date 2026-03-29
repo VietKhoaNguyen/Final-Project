@@ -4,11 +4,9 @@ import random
 def generate_random_pin():
     return str(random.randint(0, 999999)).zfill(6)
 
-
 def generate_repeated_pin():
     digit = str(random.randint(0, 9))
     return digit * 6
-
 
 def generate_sequential_pin():
     sequences = [
@@ -37,7 +35,6 @@ def generate_pin():
         return generate_sequential_pin()
     else:
         return generate_random_pin()
-
 
 def generate_dataset(n=100000):
     return [generate_pin() for _ in range(n)]
