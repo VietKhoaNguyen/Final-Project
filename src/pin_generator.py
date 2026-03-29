@@ -1,13 +1,14 @@
 import random
 
 # ---------- BASIC GENERATORS ----------
-
 def generate_random_pin():
     return str(random.randint(0, 999999)).zfill(6)
+
 
 def generate_repeated_pin():
     digit = str(random.randint(0, 9))
     return digit * 6
+
 
 def generate_sequential_pin():
     sequences = [
@@ -16,6 +17,7 @@ def generate_sequential_pin():
     ]
     return random.choice(sequences)
 
+
 def generate_birthdate_pin():
     day = random.randint(1, 31)
     month = random.randint(1, 12)
@@ -23,9 +25,7 @@ def generate_birthdate_pin():
 
     return f"{day:02d}{month:02d}{year:02d}"
 
-
 # ---------- MAIN GENERATOR ----------
-
 def generate_pin():
     r = random.random()
 
