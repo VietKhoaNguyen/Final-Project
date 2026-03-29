@@ -86,5 +86,5 @@ python main.py
 
 ## Author
 
-Nguyễn Việt Khoa - 23BI14223
+Nguyễn Việt Khoa - 23BI14223</br>
 Bachelor Thesis - ICT
