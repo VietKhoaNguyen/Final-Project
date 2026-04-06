@@ -1,12 +1,13 @@
 import pandas as pd
 
 def compute_frequency(file_path):
-    df = pd.read_csv(file_path)
+    df = pd.read_csv(file_path, dtype={"pin": str})
+    df["pin"] = df["pin"].str.zfill(6)
 
-    freq = df['pin'].value_counts().reset_index()
-    freq.columns = ['pin', 'count']
+    freq = df["pin"].value_counts().reset_index()
+    freq.columns = ["pin", "count"]
 
-    freq['probability'] = freq['count'] / len(df)
+    freq["probability"] = freq["count"] / len(df)
 
     return freq
 
