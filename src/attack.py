@@ -4,14 +4,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 def _normalize_pin(pin: str) -> str:
-    """Ensure every PIN is treated as a 6-digit string."""
     return str(pin).zfill(6)
 
 def _get_distribution_dict(freq_df: pd.DataFrame) -> Dict[str, float]:
-    """
-    Convert frequency dataframe into a dictionary:
-    {pin: probability}
-    """
     dist = {}
     for _, row in freq_df.iterrows():
         pin = _normalize_pin(row["pin"])
@@ -23,24 +18,16 @@ def _top_k_success_from_guess_order(
     guess_order: List[str],
     distribution: Dict[str, float],
     k: int
+    
 ) -> float:
-    """
-    Compute top-k success by summing probabilities of the first k guessed PINs.
-    """
     top_guesses = guess_order[:k]
     return sum(distribution.get(_normalize_pin(pin), 0.0) for pin in top_guesses)
 
-# =========================================================
 # RANDOM ATTACK
-# =========================================================
-
 def build_random_guess_order(
     distribution: Dict[str, float],
     seed: Optional[int] = None
 ) -> List[str]:
-    """
-    Build a random ordering of all observed PINs.
-    """
     rng = random.Random(seed)
     pins = list(distribution.keys())
     rng.shuffle(pins)
@@ -50,59 +37,37 @@ def random_attack_success(
     freq_df: pd.DataFrame,
     k_values: List[int] = [1, 3, 5, 10],
     seed: Optional[int] = None
+    
 ) -> Dict[str, float]:
-    """
-    Evaluate a random guessing attack.
-    """
     distribution = _get_distribution_dict(freq_df)
     guess_order = build_random_guess_order(distribution, seed=seed)
 
     results = {}
     for k in k_values:
-        results[f"Top-{k}"] = _top_k_success_from_guess_order(
-            guess_order, distribution, k
-        )
+        results[f"Top-{k}"] = _top_k_success_from_guess_order(guess_order, distribution, k)
     return results
 
-# =========================================================
-# FREQUENCY-RANKED ATTACK
-# =========================================================
-
+# FREQ-RANKED ATTACK
 def build_frequency_ranked_guess_order(freq_df: pd.DataFrame) -> List[str]:
-    """
-    Guess most probable PINs first.
-    """
     sorted_df = freq_df.sort_values(by="probability", ascending=False)
     return [_normalize_pin(pin) for pin in sorted_df["pin"].tolist()]
 
 def frequency_ranked_attack_success(
     freq_df: pd.DataFrame,
     k_values: List[int] = [1, 3, 5, 10]
+    
 ) -> Dict[str, float]:
-    """
-    Evaluate a frequency-ranked attack.
-    """
     distribution = _get_distribution_dict(freq_df)
     guess_order = build_frequency_ranked_guess_order(freq_df)
 
     results = {}
     for k in k_values:
-        results[f"Top-{k}"] = _top_k_success_from_guess_order(
-            guess_order, distribution, k
-        )
+        results[f"Top-{k}"] = _top_k_success_from_guess_order(guess_order, distribution, k)
     return results
 
-# =========================================================
 # RULE-BASED ATTACK
-# =========================================================
-
 def _is_date_like(pin: str) -> bool:
-    """
-    Approximate whether a PIN looks like a 6-digit date encoding.
-    Supports rough DDMMYY or MMDDYY style checks.
-    """
     pin = _normalize_pin(pin)
-
     a = int(pin[:2])
     b = int(pin[2:4])
 
@@ -111,14 +76,6 @@ def _is_date_like(pin: str) -> bool:
     return ddmm_like or mmdd_like
 
 def build_rule_based_guess_order(freq_df: pd.DataFrame) -> List[str]:
-    """
-    Build a rule-based order prioritizing:
-    1. repeated digits
-    2. sequential digits
-    3. significant/common patterns
-    4. date-like patterns
-    5. all remaining PINs by probability
-    """
     distribution = _get_distribution_dict(freq_df)
     all_pins = list(distribution.keys())
 
@@ -167,31 +124,19 @@ def rule_based_attack_success(
     freq_df: pd.DataFrame,
     k_values: List[int] = [1, 3, 5, 10]
 ) -> Dict[str, float]:
-    """
-    Evaluate a rule-based attack.
-    """
     distribution = _get_distribution_dict(freq_df)
     guess_order = build_rule_based_guess_order(freq_df)
 
     results = {}
     for k in k_values:
-        results[f"Top-{k}"] = _top_k_success_from_guess_order(
-            guess_order, distribution, k
-        )
+        results[f"Top-{k}"] = _top_k_success_from_guess_order(guess_order, distribution, k)
     return results
 
-# =========================================================
 # LEAKAGE-ASSISTED ATTACK
-# =========================================================
-
 def build_leakage_guess_order(
     freq_df: pd.DataFrame,
     leaked_candidates: List[str]
 ) -> List[str]:
-    """
-    Reorder guesses by prioritizing leaked DOB-derived PINs first,
-    then follow remaining frequency-ranked order.
-    """
     distribution = _get_distribution_dict(freq_df)
     leaked_candidates = [_normalize_pin(pin) for pin in leaked_candidates]
 
@@ -207,24 +152,17 @@ def leakage_assisted_attack_success(
     freq_df: pd.DataFrame,
     leaked_candidates: List[str],
     k_values: List[int] = [1, 3, 5, 10]
+    
 ) -> Dict[str, float]:
-    """
-    Evaluate a leakage-assisted attack.
-    """
     distribution = _get_distribution_dict(freq_df)
     guess_order = build_leakage_guess_order(freq_df, leaked_candidates)
 
     results = {}
     for k in k_values:
-        results[f"Top-{k}"] = _top_k_success_from_guess_order(
-            guess_order, distribution, k
-        )
+        results[f"Top-{k}"] = _top_k_success_from_guess_order(guess_order, distribution, k)
     return results
 
-# =========================================================
-# PUBLIC APIS
-# =========================================================
-
+# Public APIS
 def evaluate_attack_strategy(
     freq_df: pd.DataFrame,
     strategy: str = "frequency",
@@ -232,15 +170,6 @@ def evaluate_attack_strategy(
     k_values: List[int] = [1, 3, 5, 10],
     seed: Optional[int] = 42
 ) -> Dict[str, float]:
-    """
-    Evaluate one attack strategy.
-
-    strategy:
-    - 'random'
-    - 'frequency'
-    - 'rule'
-    - 'leakage'
-    """
     strategy = strategy.lower()
 
     if strategy == "random":
@@ -267,9 +196,6 @@ def evaluate_all_attacks(
     k_values: List[int] = [1, 3, 5, 10],
     seed: Optional[int] = 42
 ) -> Dict[str, Dict[str, float]]:
-    """
-    Evaluate all attack strategies and return nested results.
-    """
     return {
         "Random": evaluate_attack_strategy(
             freq_df, strategy="random", k_values=k_values, seed=seed
@@ -289,13 +215,6 @@ def evaluate_all_attacks(
     }
 
 def print_attack_results(results):
-    """
-    Print attack results in a readable way.
-
-    Supports:
-    - single strategy result
-    - nested multi-strategy result
-    """
     print("\nAttack Results:")
 
     if results and isinstance(next(iter(results.values())), dict):
