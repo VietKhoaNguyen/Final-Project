@@ -10,6 +10,7 @@ from src.analysis import (
     print_security_metrics,
 )
 from src.attack import evaluate_all_attacks, print_attack_results
+from src.plot import generate_all_plots
 
 DATA_DIR = "data"
 RESULTS_DIR = "results"
@@ -54,7 +55,6 @@ def run_one_model(model_name: str, dob: str = "1998-03-05", use_survey_weights: 
     attack_results = evaluate_all_attacks(freq, leaked_candidates=leaked_candidates)
     print_attack_results(attack_results)
 
-    # flatten summary row
     summary_row = {
         "Model": model_name,
         "Shannon Entropy (bits)": metrics["Shannon Entropy (bits)"],
@@ -71,13 +71,8 @@ def run_one_model(model_name: str, dob: str = "1998-03-05", use_survey_weights: 
 def main():
     ensure_dirs()
 
-    # CHANGE THIS:
-    # "one"  -> run one model
-    # "all"  -> run all 3 models and save summary table
-    run_mode = "all"
-
-    # if run_mode == "one", choose model here:
-    model_name = "biased"   # uniform / biased / leakage
+    run_mode = "all"   # "one" or "all"
+    model_name = "biased"
     dob = "1998-03-05"
 
     if run_mode == "one":
@@ -97,6 +92,11 @@ def main():
         print(f"\nSummary saved to {summary_path}")
         print("\n=== Summary Table ===")
         print(summary_df)
+
+        print("\n=== Generating plots ===")
+        saved_plot_files = generate_all_plots(summary_path=summary_path, results_dir=RESULTS_DIR)
+        for f in saved_plot_files:
+            print(f"Saved plot: {f}")
         return
 
     raise ValueError("run_mode must be either 'one' or 'all'")
