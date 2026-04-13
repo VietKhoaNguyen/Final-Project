@@ -89,6 +89,28 @@ def plot_rank_probability_curve(model_name: str, freq_df: pd.DataFrame, results_
     plt.close()
     return output_path
 
+def plot_combined_rank_probability(results_dir: str = "results") -> str:
+    plt.figure(figsize=(8, 5))
+
+    for model_name in ["uniform", "biased", "leakage"]:
+        freq_df = load_frequency(model_name, results_dir)
+        ranked = freq_df.sort_values(by="probability", ascending=False).reset_index(drop=True)
+        ranked["rank"] = ranked.index + 1
+        plt.plot(ranked["rank"], ranked["probability"], label=model_name)
+
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Rank (log scale)")
+    plt.ylabel("Probability (log scale)")
+    plt.title("Combined Rank-Probability Curves Across Models")
+    plt.legend()
+    plt.tight_layout()
+
+    output_path = os.path.join(results_dir, "plot_rank_probability_combined.png")
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    return output_path
+
 def plot_attack_success_by_model(summary_df: pd.DataFrame, results_dir: str = "results") -> List[str]:
     """
     Generate 4 separate plots:
@@ -129,6 +151,63 @@ def plot_attack_success_by_model(summary_df: pd.DataFrame, results_dir: str = "r
 
     return output_paths
 
+def plot_cumulative_success_curve(results_dir: str = "results", max_k: int = 1000) -> str:
+    """
+    Plot cumulative success curve for frequency-ranked attack:
+    x = number of guesses
+    y = cumulative success probability
+    """
+    plt.figure(figsize=(8, 5))
+
+    for model_name in ["uniform", "biased", "leakage"]:
+        freq_df = load_frequency(model_name, results_dir)
+        ranked = freq_df.sort_values(by="probability", ascending=False).reset_index(drop=True)
+        ranked["cumulative_success"] = ranked["probability"].cumsum()
+
+        max_index = min(max_k, len(ranked))
+        x_vals = list(range(1, max_index + 1))
+        y_vals = ranked["cumulative_success"].iloc[:max_index]
+
+        plt.plot(x_vals, y_vals, label=model_name)
+
+    plt.xscale("log")
+    plt.xlabel("Number of Guesses (log scale)")
+    plt.ylabel("Cumulative Success Probability")
+    plt.title("Cumulative Success Curves (Frequency-Ranked Attack)")
+    plt.legend()
+    plt.tight_layout()
+
+    output_path = os.path.join(results_dir, "plot_cumulative_success_curve.png")
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    return output_path
+
+def plot_entropy_vs_attack_success(summary_df: pd.DataFrame, results_dir: str = "results") -> str:
+    """
+    Scatter plot:
+    x = Shannon entropy
+    y = Frequency-Ranked Top-10 success
+    """
+    plt.figure(figsize=(8, 5))
+
+    x = summary_df["Shannon Entropy (bits)"]
+    y = summary_df["Frequency-Ranked - Top-10"]
+
+    plt.scatter(x, y)
+
+    for _, row in summary_df.iterrows():
+        plt.annotate(row["Model"], (row["Shannon Entropy (bits)"], row["Frequency-Ranked - Top-10"]))
+
+    plt.xlabel("Shannon Entropy (bits)")
+    plt.ylabel("Top-10 Success Rate (Frequency-Ranked)")
+    plt.title("Entropy vs Attack Success")
+    plt.tight_layout()
+
+    output_path = os.path.join(results_dir, "plot_entropy_vs_attack_success.png")
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    return output_path
+
 def generate_all_plots(
     summary_path: str = "results/summary_all_models.csv",
     results_dir: str = "results"
@@ -138,15 +217,23 @@ def generate_all_plots(
 
     summary_df = load_summary(summary_path)
 
+    # Metric comparison plots
     saved_files.append(plot_entropy_comparison(summary_df, results_dir))
     saved_files.append(plot_min_entropy_comparison(summary_df, results_dir))
     saved_files.append(plot_expected_guesses_comparison(summary_df, results_dir))
 
+    # Attack comparison plots
     saved_files.extend(plot_attack_success_by_model(summary_df, results_dir))
 
+    # Per-model distribution plots
     for model_name in ["uniform", "biased", "leakage"]:
         freq_df = load_frequency(model_name, results_dir)
         saved_files.append(plot_top10_pins(model_name, freq_df, results_dir))
         saved_files.append(plot_rank_probability_curve(model_name, freq_df, results_dir))
+
+    # Additional combined / thesis-strength plots
+    saved_files.append(plot_combined_rank_probability(results_dir))
+    saved_files.append(plot_cumulative_success_curve(results_dir, max_k=1000))
+    saved_files.append(plot_entropy_vs_attack_success(summary_df, results_dir))
 
     return saved_files
