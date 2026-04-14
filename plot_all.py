@@ -2,16 +2,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# =========================
-# LOAD DATA
-# =========================
+# Load DATA
 df = pd.read_csv("summary_all_models.csv")
 
 models = df["model"].tolist()
 
-# =========================
-# 1. ATTACK SUCCESS BAR PLOTS
-# =========================
+# ATTACK Success Bar Plots
 def plot_attack_success(top_k):
     cols = {
         "Random": f"random_top{top_k}",
@@ -40,10 +36,7 @@ def plot_attack_success(top_k):
 for k in [1, 3, 5, 10]:
     plot_attack_success(k)
 
-
-# =========================
-# 2. CUMULATIVE SUCCESS CURVE
-# =========================
+# CUMULATIVE Success Curve
 def plot_cumulative():
     plt.figure()
 
@@ -72,13 +65,9 @@ def plot_cumulative():
     plt.savefig("plot_cumulative_success_curve.png")
     plt.close()
 
-
 plot_cumulative()
 
-
-# =========================
-# 3. ENTROPY vs ATTACK
-# =========================
+# ENTROPY vs ATTACK
 plt.figure()
 plt.scatter(df["entropy"], df["freq_top10"])
 
@@ -92,10 +81,7 @@ plt.tight_layout()
 plt.savefig("plot_entropy_vs_attack_success.png")
 plt.close()
 
-
-# =========================
-# 4. EXPECTED GUESSES
-# =========================
+# Expected Guesses
 plt.figure()
 plt.bar(models, df["expected_guesses"])
 plt.xlabel("Model")
@@ -105,10 +91,7 @@ plt.tight_layout()
 plt.savefig("plot_expected_guesses_comparison.png")
 plt.close()
 
-
-# =========================
-# 5. MIN ENTROPY
-# =========================
+# MIN ENTROPY
 plt.figure()
 plt.bar(models, df["min_entropy"])
 plt.xlabel("Model")
@@ -118,10 +101,7 @@ plt.tight_layout()
 plt.savefig("plot_min_entropy_comparison.png")
 plt.close()
 
-
-# =========================
-# 6. SHANNON ENTROPY
-# =========================
+# SHANNON ENTROPY
 plt.figure()
 plt.bar(models, df["entropy"])
 plt.xlabel("Model")
@@ -131,10 +111,7 @@ plt.tight_layout()
 plt.savefig("plot_entropy_comparison.png")
 plt.close()
 
-
-# =========================
-# 7. RANK-PROBABILITY CURVES
-# =========================
+# RANK-Probability Curves
 def generate_distribution(model):
     if model == "uniform":
         probs = np.ones(100000) / 100000
@@ -144,7 +121,6 @@ def generate_distribution(model):
         probs = np.sort(np.random.power(5, 100000))[::-1]
 
     return probs / probs.sum()
-
 
 def plot_rank_curve(model):
     probs = generate_distribution(model)
@@ -161,10 +137,8 @@ def plot_rank_curve(model):
     plt.savefig(f"plot_rank_probability_{model}.png")
     plt.close()
 
-
 for m in models:
     plot_rank_curve(m)
-
 
 # Combined
 plt.figure()
@@ -183,10 +157,7 @@ plt.tight_layout()
 plt.savefig("plot_rank_probability_combined.png")
 plt.close()
 
-
-# =========================
-# 8. TOP-10 PINS
-# =========================
+# Top-10 PINS
 def plot_top10(model):
     probs = generate_distribution(model)
     top10 = probs[:10]
@@ -202,9 +173,7 @@ def plot_top10(model):
     plt.savefig(f"plot_top10_{model}.png")
     plt.close()
 
-
 for m in models:
     plot_top10(m)
-
 
 print("ALL PLOTS GENERATED SUCCESSFULLY")
