@@ -1,3 +1,2 @@
-pandas
-numpy
-matplotlib
+pandas # For data manipulation and analysis
+matplotlib  # For plotting and visualization
