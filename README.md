@@ -6,9 +6,9 @@ This repository contains the implementation for a bachelor thesis project on ana
 
 ## 📌 Project Overview
 
-Although a 6-digit PIN has a theoretical space of 1,000,000 combinations, real users do not choose PINs uniformly at random. Instead, they prefer memorable patterns such as:
+Although a 6-digit PIN has a theoretical space of 1,000,000 combinations, real users do not choose PINs uniformly at random. Instead, they prefer predictable and memorable patterns such as:
 
-* Birthdates
+* Birthdates (e.g., DDMMYY)
 * Repeated digits (e.g., 111111)
 * Sequential numbers (e.g., 123456)
 * Culturally significant numbers
@@ -29,42 +29,52 @@ This project models realistic PIN distributions and evaluates how different atta
 
 ## 🧠 System Pipeline
 
-The system follows a complete experimental pipeline:
+The system follows a full experimental pipeline:
 
-1. Generate PIN dataset (uniform / biased / leakage)
+1. Generate PIN dataset
+
+   * Uniform
+   * Biased (human behavior)
+   * Leakage-based (with DOB)
+
 2. Compute frequency distribution
-3. Compute security metrics:
+
+3. Compute security metrics
 
    * Shannon Entropy
    * Min-Entropy
    * Expected Number of Guesses
-4. Simulate attacks:
+
+4. Simulate attack strategies
 
    * Random
    * Frequency-ranked
    * Rule-based
    * Leakage-assisted
+
 5. Evaluate Top-k success rates
+
 6. Compare across models
+
 7. Generate plots and summary tables
 
 ---
 
 ## ⚙️ Project Structure
 
-```
+```text
 Final_Project/
 │
 ├── src/
-│   ├── pin_generator.py     # PIN generation (uniform, biased, leakage)
+│   ├── pin_generator.py     # PIN generation logic
 │   ├── analysis.py          # Frequency + entropy + metrics
-│   ├── attack.py            # Attack strategies + evaluation
-│   ├── plot.py              # Visualization & plotting
+│   ├── attack.py            # Attack strategies
+│   ├── plot.py              # Visualization
 │
 ├── data/                    # Generated datasets
-├── results/                 # Output results + plots
+├── results/                 # Frequencies, summaries, plots
 │
-├── main.py                  # Main pipeline
+├── main.py                  # Main pipeline (CLI-supported)
 ├── README.md
 └── requirements.txt
 ```
@@ -84,15 +94,16 @@ Final_Project/
 
   * Birthdates
   * Repeated digits
-  * Sequential patterns
+  * Sequential numbers
   * Significant numbers
 * Supports survey-based weights
 
 ### 3. Leakage Model
 
-* Incorporates personal information (e.g., date of birth)
-* Boosts probability of DOB-related PINs
-* Simulates real-world data leakage scenarios
+* Incorporates personal information (DOB)
+* Generates candidate PINs derived from DOB
+* Boosts probability of those PINs
+* Simulates real-world information leakage
 
 ---
 
@@ -106,22 +117,22 @@ Final_Project/
 ### 2. Frequency-Ranked Attack
 
 * Guess PINs in descending probability order
-* Optimal strategy under known distribution
+* Optimal when distribution is known
 
 ### 3. Rule-Based Attack
 
-* Prioritizes human patterns:
+Prioritizes common human patterns:
 
-  * Repeated digits
-  * Sequential patterns
-  * Date-like PINs
-  * Significant numbers
+* Repeated digits
+* Sequential patterns
+* Date-like PINs
+* Significant numbers
 
 ### 4. Leakage-Assisted Attack
 
 * Uses leaked personal information (DOB)
 * Prioritizes candidate PINs derived from DOB
-* Then falls back to frequency-ranked order
+* Then continues with frequency-ranked guesses
 
 ---
 
@@ -129,37 +140,46 @@ Final_Project/
 
 The system computes:
 
-* **Shannon Entropy**
+### 🔹 Shannon Entropy
 
-  * Measures average uncertainty
-* **Min-Entropy**
+* Measures average uncertainty of the distribution
 
-  * Measures worst-case predictability
-* **Expected Number of Guesses**
+### 🔹 Min-Entropy
 
-  * Average effort required to guess correctly
+* Measures worst-case predictability
+* Focuses on the most likely PIN
+
+### 🔹 Expected Number of Guesses
+
+* Average number of attempts required to guess correctly
 
 ---
 
-## 📈 Output & Visualization
-
-The system automatically generates:
+## 📈 Outputs & Visualization
 
 ### 📌 Summary Table
 
-* Stored at:
+Stored at:
 
-```
+```text
 results/summary_all_models.csv
 ```
 
-### 📊 Plots
+Includes:
+
+* Entropy metrics
+* Attack success (Top-1, Top-3, Top-5, Top-10)
+
+---
+
+### 📊 Generated Plots
 
 * Entropy comparison
 * Min-entropy comparison
 * Expected guesses comparison
-* Attack success (Top-1, Top-3, Top-5, Top-10)
+* Attack success comparison (Top-k)
 * Rank-probability curves (log-log)
+* Combined rank curves across models
 * Cumulative success curves
 * Entropy vs attack success
 
@@ -169,32 +189,54 @@ results/summary_all_models.csv
 
 ### 1. Install dependencies
 
-```
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run the system
+---
 
-```
+### 2. Run default (all models)
+
+```bash
 python main.py
 ```
 
-### 3. Output will be generated in:
+---
 
-* `data/` → datasets
-* `results/` → frequencies, summary, plots
+### 3. Run a single model
+
+```bash
+python main.py --run_mode one --model biased
+```
 
 ---
 
-## 🔧 Configuration
+### 4. Run leakage model with custom DOB
 
-In `main.py`, you can modify:
+```bash
+python main.py --run_mode one --model leakage --dob 2005-02-09
+```
 
-* `run_mode = "one" | "all"`
-* `model_name = "uniform" | "biased" | "leakage"`
-* `dob = "YYYY-MM-DD"`
-* dataset size (default: 100000)
-* random seed
+---
+
+### 5. Change dataset size
+
+```bash
+python main.py --n 50000
+```
+
+---
+
+## 🔧 Configuration Options
+
+| Argument               | Description                          |
+| ---------------------- | ------------------------------------ |
+| `--run_mode`           | `"one"` or `"all"`                   |
+| `--model`              | `"uniform"`, `"biased"`, `"leakage"` |
+| `--dob`                | Date of birth (YYYY-MM-DD)           |
+| `--n`                  | Dataset size                         |
+| `--seed`               | Random seed                          |
+| `--use_survey_weights` | Enable survey-based weights          |
 
 ---
 
@@ -225,7 +267,8 @@ University of Science and Technology of Hanoi
 
 ## 📌 Notes
 
-* This project is for academic and research purposes only.
-* The goal is to understand weaknesses in human-chosen PINs, not to exploit real systems.
+* This project is intended for academic research purposes only
+* It aims to understand weaknesses in human-chosen PINs
+* It is not intended for real-world exploitation
 
 ---
