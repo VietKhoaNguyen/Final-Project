@@ -1,4 +1,5 @@
 import os
+import argparse
 import pandas as pd
 
 from src.pin_generator import generate_dataset, dob_to_candidate_pins
@@ -12,29 +13,71 @@ from src.analysis import (
 from src.attack import evaluate_all_attacks, print_attack_results
 from src.plot import generate_all_plots
 
+# Default Configuration
 DATA_DIR = "data"
 RESULTS_DIR = "results"
 
-def ensure_dirs():
+DEFAULT_RUN_MODE = "all"          # "one" or "all"
+DEFAULT_MODEL = "biased"          # "uniform", "biased", "leakage"
+DEFAULT_DOB = "1998-03-05"
+DEFAULT_N = 100000
+DEFAULT_SEED = 42
+DEFAULT_USE_SURVEY_WEIGHTS = True
+
+# Utility Functions
+def ensure_dirs() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-def run_one_model(model_name: str, dob: str = "1998-03-05", use_survey_weights: bool = True):
+def save_dataset(pins: list[str], output_path: str) -> None:
+    df = pd.DataFrame(pins, columns=["pin"])
+    df.to_csv(output_path, index=False)
+
+def save_model_summary(
+    model_name: str,
+    metrics: dict,
+    attack_results: dict,
+    output_path: str
+) -> None:
+    """
+    Save per-model summary to CSV.
+    """
+    row = {
+        "Model": model_name,
+        "Shannon Entropy (bits)": metrics["Shannon Entropy (bits)"],
+        "Min-Entropy (bits)": metrics["Min-Entropy (bits)"],
+        "Expected Guesses": metrics["Expected Guesses"],
+    }
+
+    for attack_name, result_dict in attack_results.items():
+        for metric_name, value in result_dict.items():
+            row[f"{attack_name} - {metric_name}"] = value
+
+    df = pd.DataFrame([row])
+    df.to_csv(output_path, index=False)
+
+# Core Experimental Pipeline
+def run_one_model(
+    model_name: str,
+    dob: str = DEFAULT_DOB,
+    n: int = DEFAULT_N,
+    seed: int = DEFAULT_SEED,
+    use_survey_weights: bool = DEFAULT_USE_SURVEY_WEIGHTS
+) -> dict:
     print(f"\n{'=' * 60}")
     print(f"=== Generating {model_name} PIN dataset ===")
     print(f"{'=' * 60}")
 
     pins = generate_dataset(
-        100000,
+        n=n,
         model=model_name,
-        seed=42,
+        seed=seed,
         dob=dob,
         use_survey_weights=use_survey_weights
     )
 
     dataset_path = os.path.join(DATA_DIR, f"generated_{model_name}_pins.csv")
-    df = pd.DataFrame(pins, columns=["pin"])
-    df.to_csv(dataset_path, index=False)
+    save_dataset(pins, dataset_path)
     print(f"Dataset saved to {dataset_path}")
 
     print("\n=== Computing frequency ===")
@@ -52,9 +95,25 @@ def run_one_model(model_name: str, dob: str = "1998-03-05", use_survey_weights: 
 
     print("\n=== Running attack simulation ===")
     leaked_candidates = dob_to_candidate_pins(dob)
-    attack_results = evaluate_all_attacks(freq, leaked_candidates=leaked_candidates)
+    attack_results = evaluate_all_attacks(
+        freq,
+        leaked_candidates=leaked_candidates,
+        k_values=[1, 3, 5, 10],
+        seed=seed
+    )
     print_attack_results(attack_results)
 
+    # Save per-model summary
+    per_model_summary_path = os.path.join(RESULTS_DIR, f"summary_{model_name}.csv")
+    save_model_summary(
+        model_name=model_name,
+        metrics=metrics,
+        attack_results=attack_results,
+        output_path=per_model_summary_path
+    )
+    print(f"\nPer-model summary saved to {per_model_summary_path}")
+
+    # Return one summary row for global summary table
     summary_row = {
         "Model": model_name,
         "Shannon Entropy (bits)": metrics["Shannon Entropy (bits)"],
@@ -68,21 +127,81 @@ def run_one_model(model_name: str, dob: str = "1998-03-05", use_survey_weights: 
 
     return summary_row
 
+# CLI
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Low-Entropy Attacks on 6-Digit PINs"
+    )
+
+    parser.add_argument(
+        "--run_mode",
+        choices=["one", "all"],
+        default=DEFAULT_RUN_MODE,
+        help="Run one model or all models"
+    )
+    parser.add_argument(
+        "--model",
+        choices=["uniform", "biased", "leakage"],
+        default=DEFAULT_MODEL,
+        help="Model to run when run_mode=one"
+    )
+    parser.add_argument(
+        "--dob",
+        type=str,
+        default=DEFAULT_DOB,
+        help="Date of birth used for leakage modeling (format: YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=DEFAULT_N,
+        help="Dataset size"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Random seed"
+    )
+    parser.add_argument(
+        "--use_survey_weights",
+        action="store_true",
+        help="Use survey-based weights for biased/leakage models"
+    )
+
+    return parser.parse_args()
+
+# Main
 def main():
+    args = parse_args()
     ensure_dirs()
 
-    run_mode = "all"   # "one" or "all"
-    model_name = "biased"
-    dob = "1998-03-05"
+    # If user does not pass the flag, keep default behavior True
+    use_survey_weights = (
+        args.use_survey_weights if args.use_survey_weights else DEFAULT_USE_SURVEY_WEIGHTS
+    )
 
-    if run_mode == "one":
-        run_one_model(model_name=model_name, dob=dob, use_survey_weights=True)
+    if args.run_mode == "one":
+        run_one_model(
+            model_name=args.model,
+            dob=args.dob,
+            n=args.n,
+            seed=args.seed,
+            use_survey_weights=use_survey_weights
+        )
         return
 
-    if run_mode == "all":
+    if args.run_mode == "all":
         summaries = []
+
         for model in ["uniform", "biased", "leakage"]:
-            summary = run_one_model(model_name=model, dob=dob, use_survey_weights=True)
+            summary = run_one_model(
+                model_name=model,
+                dob=args.dob,
+                n=args.n,
+                seed=args.seed,
+                use_survey_weights=use_survey_weights
+            )
             summaries.append(summary)
 
         summary_df = pd.DataFrame(summaries)
@@ -94,7 +213,11 @@ def main():
         print(summary_df)
 
         print("\n=== Generating plots ===")
-        saved_plot_files = generate_all_plots(summary_path=summary_path, results_dir=RESULTS_DIR)
+        saved_plot_files = generate_all_plots(
+            summary_path=summary_path,
+            results_dir=RESULTS_DIR
+        )
+
         for f in saved_plot_files:
             print(f"Saved plot: {f}")
         return
