@@ -1,191 +1,266 @@
-import os
-from typing import Dict, Iterable, Tuple
-
-import matplotlib.pyplot as plt
 import pandas as pd
 
 
-DEFAULT_MODELS = ["uniform", "biased", "leakage"]
-
-
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
-
-
-def load_frequency_distribution(csv_path: str) -> pd.DataFrame:
+def _detect_pin_column(freq: pd.DataFrame) -> str:
     """
-    Load a frequency CSV produced by the main pipeline.
-
-    Expected columns:
-        pin, count, probability
+    Detect the PIN column name from a frequency dataframe.
+    Compatible with common column names: pin, PIN.
     """
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Missing frequency file: {csv_path}")
+    possible_columns = ["pin", "PIN", "Pin"]
 
-    df = pd.read_csv(csv_path, dtype={"pin": str})
-    df["pin"] = df["pin"].astype(str).str.zfill(6)
+    for col in possible_columns:
+        if col in freq.columns:
+            return col
 
-    required_columns = {"pin", "probability"}
-    missing = required_columns - set(df.columns)
-
-    if missing:
-        raise ValueError(
-            f"{csv_path} is missing required columns: {missing}. "
-            "Expected at least: pin, probability"
-        )
-
-    df["probability"] = df["probability"].astype(float)
-    df = df.sort_values(by="probability", ascending=False).reset_index(drop=True)
-
-    return df
+    raise ValueError(
+        "Could not find PIN column in frequency dataframe. "
+        "Expected one of: pin, PIN, Pin."
+    )
 
 
-def compute_blacklist_defense(
-    freq_df: pd.DataFrame,
-    blacklist_sizes: Iterable[int] = (10, 50, 100, 500),
-    evaluation_k: int = 10
+def _detect_probability_column(freq: pd.DataFrame) -> str:
+    """
+    Detect the probability column name from a frequency dataframe.
+    Compatible with common column names: probability, Probability, Frequency, frequency.
+    """
+    possible_columns = [
+        "probability",
+        "Probability",
+        "frequency",
+        "Frequency",
+        "prob",
+        "Prob",
+    ]
+
+    for col in possible_columns:
+        if col in freq.columns:
+            return col
+
+    # If only count exists, probability can be computed from count.
+    possible_count_columns = ["count", "Count", "counts", "Counts"]
+
+    for col in possible_count_columns:
+        if col in freq.columns:
+            return col
+
+    raise ValueError(
+        "Could not find probability or count column in frequency dataframe. "
+        "Expected one of: probability, Probability, frequency, Frequency, count, Count."
+    )
+
+
+def prepare_frequency_dataframe(freq: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize a frequency dataframe into columns:
+    - pin
+    - probability
+
+    This makes the defense code robust even if the original frequency table
+    uses slightly different column names.
+    """
+    if freq is None or freq.empty:
+        raise ValueError("Frequency dataframe is empty.")
+
+    freq = freq.copy()
+
+    pin_col = _detect_pin_column(freq)
+    prob_col = _detect_probability_column(freq)
+
+    standardized = pd.DataFrame()
+    standardized["pin"] = freq[pin_col].astype(str).str.zfill(6)
+
+    # If the detected column is count-like, convert to probability.
+    if prob_col.lower() in ["count", "counts"]:
+        total = freq[prob_col].sum()
+        if total == 0:
+            raise ValueError("Total count is zero. Cannot compute probabilities.")
+        standardized["probability"] = freq[prob_col] / total
+    else:
+        standardized["probability"] = freq[prob_col].astype(float)
+
+        total_prob = standardized["probability"].sum()
+
+        # Renormalize if needed.
+        if total_prob <= 0:
+            raise ValueError("Total probability is zero. Cannot normalize.")
+
+        standardized["probability"] = standardized["probability"] / total_prob
+
+    standardized = standardized.sort_values(
+        by="probability",
+        ascending=False
+    ).reset_index(drop=True)
+
+    return standardized
+
+
+def compute_top_k_success_rate(freq: pd.DataFrame, k: int = 10) -> float:
+    """
+    Compute Top-k success rate for a frequency-ranked attacker.
+
+    Meaning:
+    The attacker guesses the k most probable PINs.
+    The success rate is the sum of probabilities of those k PINs.
+    """
+    standardized = prepare_frequency_dataframe(freq)
+
+    if k <= 0:
+        return 0.0
+
+    return float(standardized.head(k)["probability"].sum())
+
+
+def apply_weak_pin_blacklist(
+    freq: pd.DataFrame,
+    blacklist_size: int
 ) -> pd.DataFrame:
     """
-    Weak PIN blacklisting defense.
+    Remove the most frequent PINs from the distribution and renormalize
+    the remaining probabilities.
 
-    The system blocks the top-N most frequent PINs.
-    After removing them, the remaining probability distribution is normalized.
-    Then Top-k success is recomputed on the filtered distribution.
+    Example:
+    blacklist_size = 10 means remove the top 10 most common PINs.
     """
-    rows = []
+    standardized = prepare_frequency_dataframe(freq)
 
-    original_topk_success = freq_df.head(evaluation_k)["probability"].sum()
+    if blacklist_size < 0:
+        raise ValueError("blacklist_size must be non-negative.")
 
-    for n in blacklist_sizes:
-        filtered = freq_df.iloc[n:].copy()
-
-        if filtered.empty:
-            continue
-
-        remaining_mass = filtered["probability"].sum()
-
-        if remaining_mass <= 0:
-            continue
-
-        filtered["normalized_probability"] = (
-            filtered["probability"] / remaining_mass
+    if blacklist_size >= len(standardized):
+        raise ValueError(
+            "blacklist_size is too large. It would remove all PINs."
         )
 
-        new_topk_success = (
-            filtered.head(evaluation_k)["normalized_probability"].sum()
+    filtered = standardized.iloc[blacklist_size:].copy()
+
+    remaining_probability = filtered["probability"].sum()
+
+    if remaining_probability <= 0:
+        raise ValueError(
+            "Remaining probability is zero after blacklisting. "
+            "Cannot renormalize distribution."
         )
 
-        absolute_reduction = original_topk_success - new_topk_success
+    filtered["probability"] = filtered["probability"] / remaining_probability
 
-        relative_reduction_percent = (
-            absolute_reduction / original_topk_success * 100
-            if original_topk_success > 0
-            else 0
-        )
+    filtered = filtered.sort_values(
+        by="probability",
+        ascending=False
+    ).reset_index(drop=True)
 
-        rows.append({
-            "defense": "weak_pin_blacklisting",
-            "blacklist_size": n,
-            "evaluation_k": evaluation_k,
-            "original_topk_success": original_topk_success,
-            "new_topk_success": new_topk_success,
-            "absolute_reduction": absolute_reduction,
-            "relative_reduction_percent": relative_reduction_percent,
-        })
-
-    return pd.DataFrame(rows)
+    return filtered
 
 
-def plot_blacklist_defense(
-    blacklist_results: pd.DataFrame,
-    output_path: str
-) -> None:
+def evaluate_weak_pin_blacklisting(
+    freq: pd.DataFrame,
+    blacklist_size: int,
+    k: int = 10
+) -> dict:
     """
-    Plot Top-10 success rate after weak PIN blacklisting.
+    Evaluate one weak PIN blacklist size.
+
+    It computes:
+    - original Top-k success rate
+    - new Top-k success rate after removing frequent PINs
+    - absolute reduction
+    - relative reduction
     """
-    plt.figure(figsize=(9, 5))
+    original_success_rate = compute_top_k_success_rate(freq, k=k)
 
-    for model in blacklist_results["model"].unique():
-        subset = blacklist_results[blacklist_results["model"] == model]
+    filtered_freq = apply_weak_pin_blacklist(
+        freq=freq,
+        blacklist_size=blacklist_size
+    )
 
-        plt.plot(
-            subset["blacklist_size"],
-            subset["new_topk_success"],
-            marker="o",
-            label=model
-        )
+    new_success_rate = compute_top_k_success_rate(filtered_freq, k=k)
 
-    plt.xlabel("Number of Most Frequent PINs Blacklisted")
-    plt.ylabel("New Top-10 Attack Success Rate")
-    plt.title("Defense Study: Weak PIN Blacklisting")
-    plt.xticks([10, 50, 100, 500])
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
+    absolute_reduction = original_success_rate - new_success_rate
 
-    plt.savefig(output_path, dpi=300)
-    plt.close()
-
-
-def run_defense_study(
-    data_dir: str = "data",
-    results_dir: str = "results",
-    figures_dir: str = "results/figures",
-    models: Iterable[str] = DEFAULT_MODELS,
-    blacklist_sizes: Tuple[int, ...] = (10, 50, 100, 500),
-    evaluation_k: int = 10
-) -> Dict[str, pd.DataFrame]:
-    """
-    Run the weak PIN blacklisting defense study.
-
-    This function uses frequency files generated by the main pipeline:
-        results/frequency_uniform.csv
-        results/frequency_biased.csv
-        results/frequency_leakage.csv
-
-    Outputs:
-        results/defense_blacklist.csv
-        results/figures/defense_blacklist.png
-    """
-    ensure_dir(results_dir)
-    ensure_dir(figures_dir)
-
-    all_blacklist_results = []
-
-    for model in models:
-        frequency_path = os.path.join(results_dir, f"frequency_{model}.csv")
-
-        print(f"[Defense] Loading distribution: {frequency_path}")
-        freq_df = load_frequency_distribution(frequency_path)
-
-        blacklist_df = compute_blacklist_defense(
-            freq_df=freq_df,
-            blacklist_sizes=blacklist_sizes,
-            evaluation_k=evaluation_k
-        )
-
-        blacklist_df.insert(0, "model", model)
-        all_blacklist_results.append(blacklist_df)
-
-    if not all_blacklist_results:
-        raise RuntimeError("No weak PIN blacklisting results were generated.")
-
-    blacklist_results = pd.concat(all_blacklist_results, ignore_index=True)
-
-    blacklist_csv = os.path.join(results_dir, "defense_blacklist.csv")
-    blacklist_results.to_csv(blacklist_csv, index=False)
-
-    blacklist_plot = os.path.join(figures_dir, "defense_blacklist.png")
-    plot_blacklist_defense(blacklist_results, blacklist_plot)
-
-    print("[OK] Weak PIN blacklisting defense study completed.")
-    print(f"[OK] Saved CSV: {blacklist_csv}")
-    print(f"[OK] Saved plot: {blacklist_plot}")
+    if original_success_rate > 0:
+        relative_reduction = absolute_reduction / original_success_rate
+    else:
+        relative_reduction = 0.0
 
     return {
-        "blacklist": blacklist_results
+        "Blacklist Size": blacklist_size,
+        "Original Top-10 Success Rate": original_success_rate,
+        "New Top-10 Success Rate": new_success_rate,
+        "Absolute Reduction": absolute_reduction,
+        "Relative Reduction": relative_reduction,
     }
 
 
-if __name__ == "__main__":
-    run_defense_study()
+def run_weak_pin_blacklisting_study(
+    freq: pd.DataFrame,
+    model_name: str,
+    blacklist_sizes: list[int],
+    k: int = 10
+) -> pd.DataFrame:
+    """
+    Run weak PIN blacklisting defense study for one PIN model.
+
+    This is the main function imported by app.py.
+
+    Parameters
+    ----------
+    freq:
+        Frequency table of one PIN model.
+    model_name:
+        Name of the model: uniform, biased, or leakage.
+    blacklist_sizes:
+        List of blacklist sizes, e.g. [10, 50, 100, 500].
+    k:
+        Top-k attack success rate to evaluate. Default is 10.
+
+    Returns
+    -------
+    pd.DataFrame
+        Defense result table.
+    """
+    results = []
+
+    for size in blacklist_sizes:
+        result = evaluate_weak_pin_blacklisting(
+            freq=freq,
+            blacklist_size=size,
+            k=k
+        )
+
+        result["Model"] = model_name
+        result["Defense Type"] = "Weak PIN Blacklisting"
+
+        results.append(result)
+
+    defense_df = pd.DataFrame(results)
+
+    defense_df = defense_df[
+        [
+            "Model",
+            "Defense Type",
+            "Blacklist Size",
+            "Original Top-10 Success Rate",
+            "New Top-10 Success Rate",
+            "Absolute Reduction",
+            "Relative Reduction",
+        ]
+    ]
+
+    return defense_df
+
+
+def save_defense_results(
+    defense_df: pd.DataFrame,
+    output_path: str
+) -> None:
+    """
+    Save defense study results to CSV.
+    """
+    defense_df.to_csv(output_path, index=False)
+
+
+def print_defense_results(defense_df: pd.DataFrame) -> None:
+    """
+    Print defense study results in terminal.
+    """
+    print("\n=== Defense Study: Weak PIN Blacklisting ===")
+    print(defense_df.to_string(index=False))
