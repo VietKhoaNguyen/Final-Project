@@ -193,7 +193,7 @@ The defense study evaluates blacklist sizes such as:
 - 10;
 - 50;
 - 100;
-- 500.
+- 500
 
 The purpose is to test whether blocking very common PINs can reduce the success rate of frequency-ranked attacks.
 
