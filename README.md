@@ -77,7 +77,6 @@ The project focuses on:
 - synthetic or literature-grounded PIN distributions;
 - simulation-based attacks;
 - entropy and guessability analysis;
-- limited-attempt attack success;
 - one defense study using weak PIN blacklisting.
 
 The project does not include:
@@ -115,10 +114,13 @@ Final_Project/
 │   ├── summary_biased.csv
 │   ├── summary_leakage.csv
 │   ├── summary_all_models.csv
-│   ├── defense_blacklist.csv
+│   ├── defense_weak_blacklisting.csv
 │   └── figures/
 │
+├── png/
+│
 ├── main.py
+├── app.py
 ├── README.md
 └── requirements.txt
 ```
@@ -133,15 +135,22 @@ Final_Project/
 
 This is the main experimental pipeline. It controls the full workflow of the project:
 
-1. generate PIN datasets;
-2. save generated datasets;
-3. compute frequency distributions;
-4. compute security metrics;
-5. run attack simulations;
-6. save per-model summaries;
-7. save the global summary table;
-8. generate result plots;
-9. run the weak PIN blacklisting defense study.
+1. parse command-line arguments;
+2. generate PIN datasets for one or all models;
+3. save generated datasets to the `data` folder;
+4. compute frequency distributions;
+5. compute security metrics;
+6. run attack simulations;
+7. save per-model summary CSV files;
+8. save the combined summary table;
+9. generate result plots;
+10. run the weak PIN blacklisting defense study (unless `--no_defense` is passed).
+
+---
+
+### app.py
+
+This file provides an interactive web application built with Streamlit. It allows users to explore the project results and run simulations through a browser-based interface without using the command line.
 
 ---
 
@@ -153,7 +162,15 @@ This file contains the PIN generation logic. It supports three PIN generation mo
 2. biased model;
 3. leakage model.
 
-It also contains helper functions for converting a date of birth into possible 6-digit PIN candidates.
+It also contains helper functions for converting a date of birth into possible 6-digit PIN candidates. The biased and leakage models support both default weights and survey-based weights.
+
+The survey-based weights approximate real-world behavior:
+
+- date-related patterns: approximately 47% (split across birthdate, anniversary, year-based);
+- repeated digits: approximately 15%;
+- sequential digits: approximately 11%;
+- random: approximately 14%;
+- cultural or significant numbers: approximately 12%.
 
 ---
 
@@ -161,56 +178,67 @@ It also contains helper functions for converting a date of birth into possible 6
 
 This file contains the security analysis functions. It computes:
 
-1. frequency tables;
+1. frequency tables from generated PIN datasets;
 2. Shannon entropy;
 3. min-entropy;
-4. expected guesses;
+4. expected guesses under optimal ranked guessing;
 5. probability distributions.
 
-It also provides functions for saving frequency results and printing important summary values.
+It also provides functions for saving frequency results and printing summary values to the terminal.
 
 ---
 
 ### src/attack.py
 
-This file contains the attack simulation logic. It evaluates multiple attack strategies:
+This file contains the attack simulation logic. It evaluates four attack strategies:
 
 1. random attack;
 2. frequency-ranked attack;
 3. rule-based attack;
 4. leakage-assisted attack.
 
-It computes Top-k success rates for different values of k, such as Top-1, Top-3, Top-5, and Top-10.
+It computes Top-k success rates for k = 1, 3, 5, and 10.
+
+The rule-based attack prioritizes PINs in the following order:
+
+1. repeated digits (e.g., 000000, 888888);
+2. sequential digits (e.g., 123456, 987654);
+3. significant numbers (e.g., 121212, 123123, 520520);
+4. date-like patterns;
+5. all remaining PINs sorted by frequency.
 
 ---
 
 ### src/defense.py
 
-This file contains the weak PIN blacklisting defense study. The defense removes the most frequent PINs from the distribution, renormalizes the remaining probabilities, and evaluates the new attack success rate.
+This file contains the weak PIN blacklisting defense study. The defense removes the most frequent PINs from the distribution, renormalizes the remaining probabilities, and evaluates the new Top-10 attack success rate.
 
-The defense study evaluates blacklist sizes such as:
+The defense study evaluates blacklist sizes:
 
-- 10;
-- 50;
-- 100;
-- 500
+```
+10
+50
+100
+500
+```
 
-The purpose is to test whether blocking very common PINs can reduce the success rate of frequency-ranked attacks.
+The output includes the original success rate, the new success rate after blacklisting, and both the absolute and relative reductions.
 
 ---
 
 ### src/plot.py
 
-This file generates visualizations for the project. It creates plots such as:
+This file generates visualizations for the project. It creates the following plots:
 
-1. entropy comparison;
-2. min-entropy comparison;
-3. expected guesses comparison;
-4. attack success comparison;
-5. cumulative success curves;
-6. rank-probability curves;
-7. entropy versus attack success;
-8. weak PIN blacklisting defense plot.
+1. Shannon entropy comparison across models;
+2. min-entropy comparison across models;
+3. expected guesses comparison across models;
+4. attack success comparison for Top-1, Top-3, Top-5, and Top-10;
+5. top-10 most common PINs per model;
+6. rank-probability curves per model;
+7. combined rank-probability curves across models;
+8. cumulative success curve for frequency-ranked attack (up to 1000 guesses);
+9. entropy versus Top-10 attack success scatter plot.
 
 ---
 
@@ -220,9 +248,7 @@ This file generates visualizations for the project. It creates plots such as:
 
 ## 1. Uniform Model
 
-The uniform model represents the ideal case where each 6-digit PIN has approximately equal probability.
-
-In theory, if all 1,000,000 possible PINs are equally likely, then guessing the correct PIN within a small number of attempts should be very difficult.
+The uniform model represents the ideal case where each 6-digit PIN has approximately equal probability. In theory, if all 1,000,000 possible PINs are equally likely, guessing the correct PIN within a small number of attempts should be very difficult.
 
 This model is used as the baseline for comparison.
 
@@ -276,7 +302,7 @@ This model shows that human behavior can significantly reduce practical PIN secu
 
 The leakage model represents a stronger attacker scenario. In this case, the attacker may know some personal information about the target user.
 
-In this project, the main leaked information is date of birth.
+In this project, the main leaked information is date of birth. By default, 30% of generated PINs in the leakage model are drawn from DOB-based candidates, and the remaining 70% follow the biased model.
 
 For example, if the date of birth is:
 
@@ -284,7 +310,7 @@ For example, if the date of birth is:
 1998-03-05
 ```
 
-The system can generate possible DOB-related PIN candidates such as:
+The system generates DOB-related PIN candidates such as:
 
 ```
 050398
@@ -296,7 +322,7 @@ The system can generate possible DOB-related PIN candidates such as:
 030505
 ```
 
-These candidates are then given higher priority in the leakage model.
+These candidates are given higher priority in the leakage model.
 
 The leakage model is important because many users choose PINs related to personal information, and attackers may obtain such information from social media, public records, or prior knowledge.
 
@@ -308,33 +334,19 @@ The leakage model is important because many users choose PINs related to persona
 
 ## 1. Random Attack
 
-The random attack guesses PINs in random order.
-
-This is the simplest attack strategy. It does not use any knowledge about the PIN distribution. Therefore, it usually performs poorly compared with more informed attacks.
-
-The random attack is used as a baseline.
+The random attack guesses PINs in random order. It does not use any knowledge about the PIN distribution. Therefore, it usually performs poorly compared with more informed attacks. The random attack is used as a baseline.
 
 ---
 
 ## 2. Frequency-Ranked Attack
 
-The frequency-ranked attack guesses PINs from the most frequent to the least frequent.
-
-This attack assumes that the attacker knows or can estimate the target PIN distribution.
-
-For biased and leakage-based PIN models, this attack is effective because many users concentrate on a small number of common PINs.
+The frequency-ranked attack guesses PINs from the most frequent to the least frequent. This attack assumes that the attacker knows or can estimate the target PIN distribution. For biased and leakage-based PIN models, this attack is effective because many users concentrate on a small number of common PINs.
 
 ---
 
 ## 3. Rule-Based Attack
 
-The rule-based attack uses known human PIN selection rules. It prioritizes PINs with common patterns such as:
-
-- repeated digits;
-- sequential digits;
-- date-like values;
-- year-like values;
-- simple memorable combinations.
+The rule-based attack uses known human PIN selection rules. It prioritizes PINs in the following order: repeated digits, then sequential digits, then significant numbers, then date-like values, then all remaining PINs. Each category is internally sorted by frequency.
 
 This attack does not need the exact frequency table, but it exploits predictable human behavior.
 
@@ -342,9 +354,7 @@ This attack does not need the exact frequency table, but it exploits predictable
 
 ## 4. Leakage-Assisted Attack
 
-The leakage-assisted attack uses personal information, especially date of birth.
-
-The attacker first generates DOB-based candidate PINs and prioritizes them. After that, the attack can continue using frequency-ranked guessing.
+The leakage-assisted attack uses personal information, especially date of birth. The attacker first generates DOB-based candidate PINs and prioritizes them by their observed probability. After exhausting the DOB candidates, the attack continues using frequency-ranked guessing.
 
 This attack represents a realistic threat model where the attacker knows some personal information about the victim.
 
@@ -372,11 +382,11 @@ For example, the system may blacklist:
 
 The defense process is:
 
-1. load the PIN distribution;
-2. rank PINs by probability;
+1. load the PIN frequency distribution;
+2. rank PINs by probability in descending order;
 3. remove the top N most frequent PINs;
 4. renormalize the remaining probability distribution;
-5. run the frequency-ranked attack again;
+5. run the frequency-ranked attack again on the filtered distribution;
 6. measure the new Top-10 success rate.
 
 The tested blacklist sizes are:
@@ -388,9 +398,14 @@ The tested blacklist sizes are:
 500
 ```
 
-The purpose of this defense study is to evaluate whether removing the most predictable PINs can reduce attack success.
+The defense output includes for each blacklist size:
 
-This defense is not a complete security solution. However, it is a practical and understandable defense mechanism for reducing the risk caused by very weak PIN choices.
+- original Top-10 success rate;
+- new Top-10 success rate after blacklisting;
+- absolute reduction;
+- relative reduction.
+
+This defense is not a complete security solution. However, it is a practical and understandable mechanism for reducing the risk caused by very weak PIN choices.
 
 ---
 
@@ -400,43 +415,25 @@ This defense is not a complete security solution. However, it is a practical and
 
 ## 1. Shannon Entropy
 
-Shannon entropy measures the average uncertainty of a distribution.
-
-If PINs are close to uniformly distributed, Shannon entropy is higher.
-
-If users concentrate on a small number of common PINs, Shannon entropy becomes lower.
-
-In this project, Shannon entropy is measured in bits.
+Shannon entropy measures the average uncertainty of a distribution. If PINs are close to uniformly distributed, Shannon entropy is higher. If users concentrate on a small number of common PINs, Shannon entropy becomes lower. In this project, Shannon entropy is measured in bits.
 
 ---
 
 ## 2. Min-Entropy
 
-Min-entropy focuses on the most likely PIN.
-
-It measures worst-case predictability.
-
-If one PIN is very common, min-entropy becomes low, even if the rest of the distribution is diverse.
-
-Min-entropy is important because attackers usually try the most likely PINs first.
+Min-entropy focuses on the most likely PIN and measures worst-case predictability. If one PIN is very common, min-entropy becomes low even if the rest of the distribution is diverse. Min-entropy is important because attackers usually try the most likely PINs first.
 
 ---
 
 ## 3. Expected Guesses
 
-Expected guesses estimate the average number of guesses needed to find the correct PIN under an optimal ranked guessing strategy.
-
-A higher expected number of guesses means stronger practical security.
-
-A lower expected number of guesses means the PIN distribution is easier to attack.
+Expected guesses estimate the average number of guesses needed to find the correct PIN under an optimal ranked guessing strategy. A higher value means stronger practical security. A lower value means the PIN distribution is easier to attack.
 
 ---
 
 ## 4. Top-k Success Rate
 
-Top-k success rate measures the probability that an attacker succeeds within k guesses.
-
-This project evaluates:
+Top-k success rate measures the probability that an attacker succeeds within k guesses under a frequency-ranked strategy. This project evaluates:
 
 ```
 Top-1
@@ -445,26 +442,22 @@ Top-5
 Top-10
 ```
 
-This metric is important because real systems usually limit the number of login attempts.
-
-For example, if a system allows only 3 attempts, then Top-3 success rate is more meaningful than full brute-force success.
-
 ---
 
 ## Experimental Workflow
 
 The experiment follows this workflow:
 
-1. The user selects the model type.
-2. The system generates PINs.
-3. The system computes the frequency table.
-4. The system computes entropy and guessability metrics.
-5. The system runs attack simulations.
-6. The system computes Top-k success rates.
-7. The system saves CSV summaries.
-8. The system generates plots.
+1. The user selects the run mode and model type.
+2. The system generates PINs using the selected model.
+3. The system computes the frequency table and saves it to CSV.
+4. The system computes Shannon entropy, min-entropy, and expected guesses.
+5. The system runs all four attack simulations.
+6. The system computes Top-k success rates for k = 1, 3, 5, 10.
+7. The system saves per-model and combined summary CSV files.
+8. The system generates all plots and saves them to the `results` folder.
 9. The system runs the weak PIN blacklisting defense study.
-10. The system saves defense results and defense plots.
+10. The system saves defense results and the defense plot.
 
 ---
 
@@ -472,12 +465,14 @@ The experiment follows this workflow:
 
 The main configurable parameters are:
 
-- model type;
-- date of birth;
+- run mode (`one` or `all`);
+- model type (`uniform`, `biased`, or `leakage`);
+- date of birth (for leakage model, format `YYYY-MM-DD`);
 - dataset size;
 - random seed;
-- use of survey-based weights;
-- blacklist sizes for defense study.
+- whether to use survey-based weights;
+- blacklist sizes for the defense study;
+- whether to skip the defense study.
 
 ---
 
@@ -494,6 +489,8 @@ DEFAULT_DOB = "1998-03-05"
 DEFAULT_N = 100000
 DEFAULT_SEED = 42
 DEFAULT_USE_SURVEY_WEIGHTS = True
+DEFAULT_RUN_DEFENSE = True
+DEFAULT_BLACKLIST_SIZES = [10, 50, 100, 500]
 ```
 
 ---
@@ -522,15 +519,7 @@ To run the full experiment for all three models:
 python main.py
 ```
 
-This will run:
-
-```
-uniform
-biased
-leakage
-```
-
-It will generate datasets, frequency tables, summary files, plots, and defense results.
+This will run uniform, biased, and leakage models in sequence and generate all datasets, frequency tables, summary files, plots, and defense results.
 
 ---
 
@@ -610,9 +599,7 @@ The default dataset size is:
 python main.py --seed 123
 ```
 
-The random seed is used for reproducibility.
-
-Using the same seed should produce the same or very similar results.
+The random seed is used for reproducibility. Using the same seed should produce the same or very similar results.
 
 ---
 
@@ -622,7 +609,35 @@ Using the same seed should produce the same or very similar results.
 python main.py --use_survey_weights
 ```
 
-Survey-based weights are used to make the biased and leakage models more realistic.
+Survey-based weights make the biased and leakage models more realistic by approximating observed real-world PIN selection behavior.
+
+---
+
+### Skip the Defense Study
+
+```bash
+python main.py --no_defense
+```
+
+---
+
+### Custom Blacklist Sizes
+
+```bash
+python main.py --blacklist_sizes 10,50,100,500
+```
+
+Blacklist sizes must be provided as a comma-separated list of integers.
+
+---
+
+### Run the Web Application
+
+```bash
+streamlit run app.py
+```
+
+This launches the interactive Streamlit web application in your browser.
 
 ---
 
@@ -640,7 +655,7 @@ data/generated_biased_pins.csv
 data/generated_leakage_pins.csv
 ```
 
-Each file contains generated 6-digit PIN samples.
+Each file contains generated 6-digit PIN samples with a single column named `pin`.
 
 ---
 
@@ -654,11 +669,7 @@ results/frequency_biased.csv
 results/frequency_leakage.csv
 ```
 
-Each frequency table contains:
-
-- PIN;
-- count;
-- probability.
+Each frequency table contains the columns `pin`, `count`, and `probability`.
 
 ---
 
@@ -678,58 +689,45 @@ The combined summary file is:
 results/summary_all_models.csv
 ```
 
-The summary files contain:
-
-- Shannon entropy;
-- min-entropy;
-- expected guesses;
-- Top-1 success rate;
-- Top-3 success rate;
-- Top-5 success rate;
-- Top-10 success rate;
-- attack results for each strategy.
+The summary files contain Shannon entropy, min-entropy, expected guesses, and Top-k success rates for all four attack strategies.
 
 ---
 
 ### Defense Result File
 
-The weak PIN blacklisting defense result is saved as:
+The weak PIN blacklisting defense results are saved as:
 
 ```
-results/defense_blacklist.csv
+results/defense_weak_blacklisting.csv
 ```
 
-This file contains:
-
-- model name;
-- blacklist size;
-- original Top-10 attack success rate;
-- new Top-10 attack success rate after blacklisting;
-- absolute reduction;
-- relative reduction percentage.
+This file contains for each model and blacklist size: the model name, defense type, blacklist size, original Top-10 success rate, new Top-10 success rate, absolute reduction, and relative reduction.
 
 ---
 
 ### Plots
 
-The project generates multiple plots, including:
+The project generates the following plots saved in the `results` folder:
 
-- Shannon entropy comparison across PIN models;
-- min-entropy comparison across PIN models;
-- expected guesses comparison across PIN models;
-- attack success comparison for Top-1;
-- attack success comparison for Top-3;
-- attack success comparison for Top-5;
-- attack success comparison for Top-10;
-- cumulative success curves;
-- rank-probability curve for the uniform model;
-- rank-probability curve for the biased model;
-- rank-probability curve for the leakage model;
-- combined rank-probability curves;
-- entropy versus attack success;
-- weak PIN blacklisting defense plot.
-
-These plots are saved in the `results` folder.
+```
+results/plot_entropy_comparison.png
+results/plot_min_entropy_comparison.png
+results/plot_expected_guesses_comparison.png
+results/plot_attack_comparison_top-1.png
+results/plot_attack_comparison_top-3.png
+results/plot_attack_comparison_top-5.png
+results/plot_attack_comparison_top-10.png
+results/plot_top10_uniform.png
+results/plot_top10_biased.png
+results/plot_top10_leakage.png
+results/plot_rank_probability_uniform.png
+results/plot_rank_probability_biased.png
+results/plot_rank_probability_leakage.png
+results/plot_rank_probability_combined.png
+results/plot_cumulative_success_curve.png
+results/plot_entropy_vs_attack_success.png
+results/defense_weak_blacklisting_plot.png
+```
 
 ---
 
@@ -739,63 +737,41 @@ These plots are saved in the `results` folder.
 
 ### Uniform Model
 
-The uniform model has the highest entropy because PINs are close to evenly distributed.
-
-Attack success is very low because there are no strong patterns to exploit.
-
-This model represents ideal random PIN selection.
+The uniform model has the highest entropy because PINs are close to evenly distributed. Attack success is very low because there are no strong patterns to exploit. This model represents ideal random PIN selection.
 
 ---
 
 ### Biased Model
 
-The biased model has lower entropy than the uniform model.
-
-Some PINs appear much more frequently than others.
-
-Frequency-ranked and rule-based attacks perform much better against this model than random guessing.
-
-This shows that human bias reduces practical security.
+The biased model has lower entropy than the uniform model. Some PINs appear much more frequently than others. Frequency-ranked and rule-based attacks perform much better against this model than random guessing. This shows that human bias reduces practical security.
 
 ---
 
 ### Leakage Model
 
-The leakage model has the lowest security among the three models.
-
-Personal-information-based PINs become highly probable.
-
-Leakage-assisted attacks and frequency-ranked attacks achieve higher success rates.
-
-This shows that personal information can significantly increase attack effectiveness.
+The leakage model has the lowest security among the three models. Personal-information-based PINs become highly probable. Leakage-assisted and frequency-ranked attacks achieve the highest success rates. This shows that personal information can significantly increase attack effectiveness.
 
 ---
 
 ### Defense Study Interpretation
 
-Weak PIN blacklisting reduces the success rate of frequency-ranked attacks by removing the most common PINs.
-
-The larger the blacklist size, the more the attacker loses access to high-probability guesses.
-
-However, blacklisting does not completely solve the problem because users may still choose other predictable PINs.
-
-Therefore, weak PIN blacklisting should be considered a simple defensive improvement, not a complete security mechanism.
+Weak PIN blacklisting reduces the success rate of frequency-ranked attacks by removing the most common PINs. The larger the blacklist size, the more the attacker loses access to high-probability guesses. However, blacklisting does not completely solve the problem because users may still choose other predictable PINs. Weak PIN blacklisting should be considered a simple defensive improvement, not a complete security mechanism.
 
 ---
 
 ## UML Diagrams
 
-The project includes UML diagrams for system explanation and thesis documentation.
+The project includes UML diagrams saved in the `png` folder for system explanation and thesis documentation.
 
 The diagrams include:
 
 1. Use Case Diagram
 2. Class Diagram
-3. Component Diagram
+3. System Architecture Diagram
 4. Activity Diagram - Generate PIN Distribution
 5. Activity Diagram - Run Attack Simulation
-6. Activity Diagram - Compute Security Metrics
-7. Activity Diagram - Weak PIN Blacklisting Defense
+6. Activity Diagram - Evaluation and Visualization
+7. Activity Diagram - Defense Study
 8. Sequence Diagram - Generate PIN Distribution
 9. Sequence Diagram - Run Attack Simulation
 10. Sequence Diagram - Leakage-Assisted Attack
@@ -813,10 +789,10 @@ The expected findings of this project are:
 2. Human-biased PINs have lower entropy and higher attack success.
 3. Leakage-based PINs are more vulnerable because attackers can prioritize personal-information-based candidates.
 4. Frequency-ranked attacks are highly effective when the distribution is non-uniform.
-5. Rule-based attacks can exploit common human patterns.
+5. Rule-based attacks can exploit common human patterns without needing the full frequency table.
 6. Leakage-assisted attacks can significantly improve success when date-of-birth information is known.
 7. Weak PIN blacklisting can reduce attack success by removing the most predictable PINs.
-8. Entropy alone is useful but not sufficient; Top-k success rate is more practical for limited-attempt systems.
+8. Entropy alone is useful but not sufficient; Top-k success rate provides a more practical view for this type of analysis.
 
 ---
 
@@ -829,7 +805,7 @@ This project can answer the following research questions:
 3. How effective are frequency-ranked attacks against human-biased PINs?
 4. How much does personal-information leakage improve guessing success?
 5. Which metric better reflects real-world PIN security: entropy or Top-k success rate?
-6. Can weak PIN blacklisting reduce attacker success under limited attempts?
+6. Can weak PIN blacklisting reduce attacker success?
 
 ---
 
@@ -841,6 +817,7 @@ The project uses:
 - pandas;
 - matplotlib;
 - numpy;
+- Streamlit (for the web application);
 - CSV files for storing datasets and results;
 - synthetic data generation;
 - UML diagrams for system modeling.
@@ -849,23 +826,20 @@ The project uses:
 
 ## Requirements
 
-The required Python packages are listed in `requirements.txt`.
-
-Typical dependencies include:
+The required Python packages are listed in `requirements.txt`:
 
 ```
 pandas
 matplotlib
 numpy
+streamlit
 ```
 
 ---
 
 ## Reproducibility
 
-The project supports reproducible experiments through a random seed.
-
-The default seed is:
+The project supports reproducible experiments through a random seed. The default seed is:
 
 ```
 42
