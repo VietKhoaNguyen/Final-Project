@@ -1,13 +1,18 @@
 import os
-import math
-import random
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 
+# ============================================================
+# Import from src/ — same logic as main.py
+# ============================================================
+
+from src.pin_generator import generate_dataset, dob_to_candidate_pins
+from src.analysis import compute_frequency, compute_security_metrics
+from src.attack import evaluate_all_attacks
+from src.defense import run_weak_pin_blacklisting_study
 
 # ============================================================
 # App Configuration
@@ -29,7 +34,6 @@ DEFAULT_SEED = 42
 K_VALUES = [1, 3, 5, 10]
 BLACKLIST_SIZES = [10, 50, 100, 500]
 
-
 # ============================================================
 # Session State
 # ============================================================
@@ -46,7 +50,6 @@ if "defense_summary_df" not in st.session_state:
 if "has_run" not in st.session_state:
     st.session_state.has_run = False
 
-
 # ============================================================
 # Utility Functions
 # ============================================================
@@ -56,461 +59,9 @@ def ensure_dirs() -> None:
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-def safe_parse_dob(dob: str) -> datetime:
-    try:
-        return datetime.strptime(dob, "%Y-%m-%d")
-    except ValueError:
-        raise ValueError("DOB must be in YYYY-MM-DD format, for example: 1998-03-05")
-
-
-def format_pin(value: int | str, pin_length: int) -> str:
-    return str(value).zfill(pin_length)[-pin_length:]
-
-
-def get_pin_space_size(pin_length: int) -> int:
-    return 10 ** pin_length
-
-
-def get_pin_lengths_from_mode(pin_mode: str) -> list[int]:
-    if pin_mode == "4-digit PIN only":
-        return [4]
-    if pin_mode == "6-digit PIN only":
-        return [6]
-    return [4, 6]
-
-
-def get_models_from_mode(model_mode: str) -> list[str]:
-    if model_mode == "All models":
-        return ["uniform", "biased", "leakage"]
-    return [model_mode.lower()]
-
-
-def save_dataset(pins: list[str], output_path: str) -> None:
+def save_dataset(pins: list, output_path: str) -> None:
     df = pd.DataFrame({"pin": pins})
     df.to_csv(output_path, index=False)
-
-
-def save_dataframe(df: pd.DataFrame, output_path: str) -> None:
-    df.to_csv(output_path, index=False)
-
-
-# ============================================================
-# DOB Candidate Generation
-# ============================================================
-
-def dob_to_candidate_pins(dob: str, pin_length: int) -> list[str]:
-    """
-    Generate DOB-related candidate PINs.
-
-    For 4-digit:
-    - DDMM
-    - MMDD
-    - YYMM
-    - MMYY
-    - YYYY
-
-    For 6-digit:
-    - DDMMYY
-    - MMDDYY
-    - YYMMDD
-    - YYYYMM
-    - MMYYYY
-    - YYYYDD
-    - DDYYYY
-    - YYDDMM
-    - DDYYMM
-    """
-    date = safe_parse_dob(dob)
-
-    dd = f"{date.day:02d}"
-    mm = f"{date.month:02d}"
-    yy = f"{date.year % 100:02d}"
-    yyyy = f"{date.year:04d}"
-
-    if pin_length == 4:
-        candidates = [
-            dd + mm,
-            mm + dd,
-            yy + mm,
-            mm + yy,
-            yyyy,
-        ]
-    elif pin_length == 6:
-        candidates = [
-            dd + mm + yy,
-            mm + dd + yy,
-            yy + mm + dd,
-            yyyy + mm,
-            mm + yyyy,
-            yyyy + dd,
-            dd + yyyy,
-            yy + dd + mm,
-            dd + yy + mm,
-            mm + yy + dd,
-        ]
-    else:
-        raise ValueError("pin_length must be either 4 or 6")
-
-    cleaned = []
-    for pin in candidates:
-        pin = format_pin(pin, pin_length)
-        if pin not in cleaned:
-            cleaned.append(pin)
-
-    return cleaned
-
-
-def common_rule_based_pins(pin_length: int) -> list[str]:
-    if pin_length == 4:
-        base = [
-            "0000", "1111", "2222", "3333", "4444",
-            "5555", "6666", "7777", "8888", "9999",
-            "1234", "4321", "0123", "3210", "2580",
-            "0852", "1212", "6969", "2000", "2020",
-            "1998", "2001", "2002", "2003", "2004",
-        ]
-    else:
-        base = [
-            "000000", "111111", "222222", "333333", "444444",
-            "555555", "666666", "777777", "888888", "999999",
-            "123456", "654321", "012345", "543210", "112233",
-            "121212", "696969", "010101", "101010", "200000",
-            "202020", "199800", "001998", "200100", "002001",
-        ]
-
-    return list(dict.fromkeys(base))
-
-
-# ============================================================
-# PIN Generation Models
-# ============================================================
-
-def generate_uniform_dataset(n: int, pin_length: int, seed: int) -> list[str]:
-    rng = random.Random(seed)
-    max_value = get_pin_space_size(pin_length) - 1
-
-    return [
-        format_pin(rng.randint(0, max_value), pin_length)
-        for _ in range(n)
-    ]
-
-
-def generate_biased_dataset(
-    n: int,
-    pin_length: int,
-    seed: int,
-    dob: str
-) -> list[str]:
-    """
-    Synthetic biased model.
-
-    Bias sources:
-    - repeated digits
-    - sequential patterns
-    - DOB-related patterns
-    - random fallback
-    """
-    rng = random.Random(seed)
-
-    repeated = [str(d) * pin_length for d in range(10)]
-
-    if pin_length == 4:
-        sequences = ["1234", "4321", "0123", "3210", "2580", "0852"]
-        cultural = ["0000", "8888", "9999", "1212", "6969", "2020"]
-    else:
-        sequences = ["123456", "654321", "012345", "543210"]
-        cultural = ["000000", "888888", "999999", "121212", "696969", "202020"]
-
-    dob_candidates = dob_to_candidate_pins(dob, pin_length)
-
-    pins = []
-    max_value = get_pin_space_size(pin_length) - 1
-
-    for _ in range(n):
-        r = rng.random()
-
-        if r < 0.30:
-            pins.append(rng.choice(repeated))
-        elif r < 0.50:
-            pins.append(rng.choice(dob_candidates))
-        elif r < 0.65:
-            pins.append(rng.choice(sequences))
-        elif r < 0.78:
-            pins.append(rng.choice(cultural))
-        else:
-            pins.append(format_pin(rng.randint(0, max_value), pin_length))
-
-    return pins
-
-
-def generate_leakage_dataset(
-    n: int,
-    pin_length: int,
-    seed: int,
-    dob: str
-) -> list[str]:
-    """
-    Leakage model.
-
-    This model assumes the attacker has partial personal information,
-    especially DOB. Therefore DOB-related PINs receive a much higher
-    probability mass than in the general biased model.
-    """
-    rng = random.Random(seed)
-
-    dob_candidates = dob_to_candidate_pins(dob, pin_length)
-    rule_pins = common_rule_based_pins(pin_length)
-
-    pins = []
-    max_value = get_pin_space_size(pin_length) - 1
-
-    for _ in range(n):
-        r = rng.random()
-
-        if r < 0.55:
-            pins.append(rng.choice(dob_candidates))
-        elif r < 0.75:
-            pins.append(rng.choice(rule_pins))
-        elif r < 0.90:
-            pins.append(rng.choice(dob_candidates + rule_pins))
-        else:
-            pins.append(format_pin(rng.randint(0, max_value), pin_length))
-
-    return pins
-
-
-def generate_dataset(
-    n: int,
-    model: str,
-    pin_length: int,
-    seed: int,
-    dob: str
-) -> list[str]:
-    if model == "uniform":
-        return generate_uniform_dataset(n=n, pin_length=pin_length, seed=seed)
-
-    if model == "biased":
-        return generate_biased_dataset(
-            n=n,
-            pin_length=pin_length,
-            seed=seed,
-            dob=dob
-        )
-
-    if model == "leakage":
-        return generate_leakage_dataset(
-            n=n,
-            pin_length=pin_length,
-            seed=seed,
-            dob=dob
-        )
-
-    raise ValueError("model must be one of: uniform, biased, leakage")
-
-
-# ============================================================
-# Frequency and Security Metrics
-# ============================================================
-
-def compute_frequency_from_pins(pins: list[str]) -> pd.DataFrame:
-    df = pd.DataFrame({"PIN": pins})
-    freq = (
-        df["PIN"]
-        .value_counts()
-        .reset_index()
-    )
-
-    freq.columns = ["PIN", "Count"]
-    freq["Probability"] = freq["Count"] / freq["Count"].sum()
-    freq = freq.sort_values(
-        by=["Probability", "PIN"],
-        ascending=[False, True]
-    ).reset_index(drop=True)
-
-    return freq
-
-
-def compute_security_metrics(freq: pd.DataFrame, pin_length: int) -> dict:
-    probabilities = freq["Probability"].astype(float).to_numpy()
-
-    shannon_entropy = -np.sum(probabilities * np.log2(probabilities))
-    max_probability = float(np.max(probabilities))
-    min_entropy = -math.log2(max_probability)
-
-    ranked_probs = probabilities
-    ranks = np.arange(1, len(ranked_probs) + 1)
-    expected_guesses = float(np.sum(ranks * ranked_probs))
-
-    return {
-        "PIN Length": pin_length,
-        "Shannon Entropy (bits)": float(shannon_entropy),
-        "Min-Entropy (bits)": float(min_entropy),
-        "Expected Guesses": expected_guesses,
-        "Max Probability": max_probability,
-    }
-
-
-# ============================================================
-# Attack Simulation
-# ============================================================
-
-def evaluate_top_k_success(
-    freq: pd.DataFrame,
-    guess_order: list[str],
-    k_values: list[int]
-) -> dict:
-    probability_map = dict(zip(freq["PIN"], freq["Probability"]))
-
-    results = {}
-
-    for k in k_values:
-        guesses = guess_order[:k]
-        success = sum(probability_map.get(pin, 0.0) for pin in guesses)
-        results[f"Top-{k} Success Rate"] = float(success)
-
-    return results
-
-
-def random_guess_order(pin_length: int, seed: int) -> list[str]:
-    rng = random.Random(seed)
-    pin_space_size = get_pin_space_size(pin_length)
-
-    all_pins = [format_pin(i, pin_length) for i in range(pin_space_size)]
-    rng.shuffle(all_pins)
-
-    return all_pins
-
-
-def frequency_ranked_guess_order(freq: pd.DataFrame) -> list[str]:
-    return freq["PIN"].astype(str).tolist()
-
-
-def rule_based_guess_order(pin_length: int, freq: pd.DataFrame) -> list[str]:
-    rules = common_rule_based_pins(pin_length)
-
-    ranked = frequency_ranked_guess_order(freq)
-    ordered = []
-
-    for pin in rules:
-        if pin not in ordered:
-            ordered.append(pin)
-
-    for pin in ranked:
-        if pin not in ordered:
-            ordered.append(pin)
-
-    return ordered
-
-
-def leakage_assisted_guess_order(
-    dob: str,
-    pin_length: int,
-    freq: pd.DataFrame
-) -> list[str]:
-    candidates = dob_to_candidate_pins(dob, pin_length)
-    ranked = frequency_ranked_guess_order(freq)
-
-    ordered = []
-
-    for pin in candidates:
-        if pin not in ordered:
-            ordered.append(pin)
-
-    for pin in ranked:
-        if pin not in ordered:
-            ordered.append(pin)
-
-    return ordered
-
-
-def evaluate_all_attacks(
-    freq: pd.DataFrame,
-    pin_length: int,
-    dob: str,
-    seed: int,
-    k_values: list[int]
-) -> pd.DataFrame:
-    attacks = {
-        "Random": random_guess_order(pin_length, seed),
-        "Frequency-Ranked": frequency_ranked_guess_order(freq),
-        "Rule-Based": rule_based_guess_order(pin_length, freq),
-        "Leakage-Assisted": leakage_assisted_guess_order(dob, pin_length, freq),
-    }
-
-    rows = []
-
-    for attack_name, guess_order in attacks.items():
-        row = {"Attack Strategy": attack_name}
-        row.update(evaluate_top_k_success(freq, guess_order, k_values))
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-# ============================================================
-# Defense Study: Weak PIN Blacklisting
-# ============================================================
-
-def remove_top_frequent_pins(freq: pd.DataFrame, blacklist_size: int) -> pd.DataFrame:
-    filtered = freq.iloc[blacklist_size:].copy()
-
-    if filtered.empty:
-        return filtered
-
-    total_probability = filtered["Probability"].sum()
-
-    if total_probability > 0:
-        filtered["Probability"] = filtered["Probability"] / total_probability
-
-    filtered = filtered.reset_index(drop=True)
-    return filtered
-
-
-def run_weak_pin_blacklisting_study(
-    freq: pd.DataFrame,
-    model: str,
-    pin_length: int,
-    blacklist_sizes: list[int],
-    k: int = 10
-) -> tuple[pd.DataFrame, dict]:
-    original_top_k_success = float(freq.head(k)["Probability"].sum())
-
-    rows = []
-
-    for size in blacklist_sizes:
-        filtered_freq = remove_top_frequent_pins(freq, size)
-
-        if filtered_freq.empty:
-            new_top_k_success = 0.0
-        else:
-            new_top_k_success = float(filtered_freq.head(k)["Probability"].sum())
-
-        absolute_reduction = original_top_k_success - new_top_k_success
-
-        relative_reduction = (
-            absolute_reduction / original_top_k_success
-            if original_top_k_success > 0
-            else 0.0
-        )
-
-        rows.append({
-            "Model": model,
-            "PIN Length": pin_length,
-            "Defense Type": "Weak PIN Blacklisting",
-            "Blacklist Size": size,
-            "Original Top-10 Success Rate": original_top_k_success,
-            "New Top-10 Success Rate": new_top_k_success,
-            "Absolute Reduction": absolute_reduction,
-            "Relative Reduction": relative_reduction,
-        })
-
-    defense_df = pd.DataFrame(rows)
-
-    selected_row = defense_df[
-        defense_df["Blacklist Size"] == max(blacklist_sizes)
-    ].iloc[0].to_dict()
-
-    return defense_df, selected_row
 
 
 # ============================================================
@@ -519,150 +70,132 @@ def run_weak_pin_blacklisting_study(
 
 def plot_top_pins(freq: pd.DataFrame, title: str, top_n: int = 10) -> None:
     top = freq.head(top_n).copy()
-
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.bar(top["PIN"], top["Probability"])
+    ax.bar(top["pin"].astype(str), top["probability"])
     ax.set_title(title)
     ax.set_xlabel("PIN")
     ax.set_ylabel("Probability")
     ax.tick_params(axis="x", rotation=45)
     st.pyplot(fig)
+    plt.close(fig)
 
 
-def plot_attack_results(attack_df: pd.DataFrame, metric_name: str) -> None:
-    if metric_name not in attack_df.columns:
-        st.warning(f"No data found for {metric_name}.")
-        return
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.bar(attack_df["Attack Strategy"], attack_df[metric_name])
-    ax.set_title(f"Attack Success Comparison ({metric_name})")
+def plot_attack_results(attack_results: dict, metric_key: str) -> None:
+    labels = list(attack_results.keys())
+    values = [attack_results[a].get(metric_key, 0.0) for a in labels]
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(labels, values)
+    ax.set_title(f"Attack Success Comparison ({metric_key})")
     ax.set_xlabel("Attack Strategy")
     ax.set_ylabel("Success Rate")
-    ax.tick_params(axis="x", rotation=20)
+    ax.tick_params(axis="x", rotation=15)
     st.pyplot(fig)
+    plt.close(fig)
 
 
 def plot_defense_curve(defense_df: pd.DataFrame) -> None:
     if defense_df.empty:
         st.warning("No defense data available.")
         return
-
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(
         defense_df["Blacklist Size"],
         defense_df["New Top-10 Success Rate"],
         marker="o",
         label="After Blacklisting"
     )
-
     ax.axhline(
         y=defense_df["Original Top-10 Success Rate"].iloc[0],
         linestyle="--",
         label="Before Defense"
     )
-
     ax.set_title("Defense Study: Weak PIN Blacklisting")
     ax.set_xlabel("Number of Most Frequent PINs Blacklisted")
     ax.set_ylabel("Top-10 Attack Success Rate")
     ax.legend()
     ax.grid(True, alpha=0.3)
     st.pyplot(fig)
+    plt.close(fig)
 
 
 def plot_entropy_summary(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         return
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    labels = summary_df["Experiment"]
-    values = summary_df["Shannon Entropy (bits)"]
-
-    ax.bar(labels, values)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(summary_df["Experiment"], summary_df["Shannon Entropy (bits)"])
     ax.set_title("Shannon Entropy Comparison")
     ax.set_xlabel("Experiment")
     ax.set_ylabel("Shannon Entropy (bits)")
-    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
+    plt.close(fig)
 
 
 def plot_min_entropy_summary(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         return
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    labels = summary_df["Experiment"]
-    values = summary_df["Min-Entropy (bits)"]
-
-    ax.bar(labels, values)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(summary_df["Experiment"], summary_df["Min-Entropy (bits)"])
     ax.set_title("Min-Entropy Comparison")
     ax.set_xlabel("Experiment")
     ax.set_ylabel("Min-Entropy (bits)")
-    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
+    plt.close(fig)
 
 
 def plot_expected_guesses_summary(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         return
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    labels = summary_df["Experiment"]
-    values = summary_df["Expected Guesses"]
-
-    ax.bar(labels, values)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(summary_df["Experiment"], summary_df["Expected Guesses"])
     ax.set_title("Expected Guesses Comparison")
     ax.set_xlabel("Experiment")
     ax.set_ylabel("Expected Number of Guesses")
-    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
+    plt.close(fig)
 
 
 # ============================================================
 # Interpretation Functions
 # ============================================================
 
-def get_best_attack(attack_df: pd.DataFrame, metric: str = "Top-10 Success Rate") -> tuple[str, float]:
-    if metric not in attack_df.columns:
-        return "N/A", 0.0
-
-    row = attack_df.sort_values(by=metric, ascending=False).iloc[0]
-    return str(row["Attack Strategy"]), float(row[metric])
+def get_best_attack(attack_results: dict, metric_key: str = "Top-10") -> tuple:
+    best_name = max(attack_results, key=lambda a: attack_results[a].get(metric_key, 0.0))
+    best_value = attack_results[best_name].get(metric_key, 0.0)
+    return best_name, best_value
 
 
-def generate_attack_conclusion(
-    pin_length: int,
-    model: str,
-    metrics: dict,
-    attack_df: pd.DataFrame
-) -> str:
-    best_attack, best_success = get_best_attack(attack_df, "Top-10 Success Rate")
-
+def generate_attack_conclusion(model: str, metrics: dict, attack_results: dict) -> str:
+    best_attack, best_success = get_best_attack(attack_results, "Top-10")
     shannon = metrics["Shannon Entropy (bits)"]
-    min_entropy = metrics["Min-Entropy (bits)"]
+    min_ent = metrics["Min-Entropy (bits)"]
     expected = metrics["Expected Guesses"]
 
     if model == "uniform":
         interpretation = (
             "The uniform model behaves closest to an ideal random PIN selection process. "
-            "Attack success remains very low because probability is spread across a large key space."
+            "Attack success remains very low because probability is spread evenly across the key space."
         )
     elif model == "biased":
         interpretation = (
             "The biased model shows that human-like PIN choices reduce practical security. "
-            "Common patterns such as repeated digits, sequences, and date-like values increase the probability of successful guessing."
+            "Common patterns such as repeated digits, sequences, and date-like values "
+            "increase the probability of successful guessing."
         )
     else:
         interpretation = (
-            "The leakage model is the riskiest setting because the attacker can prioritize DOB-related candidates. "
-            "This strongly increases the success rate under a small number of allowed guesses."
+            "The leakage model is the riskiest setting because the attacker can prioritize "
+            "DOB-related candidates. This strongly increases the success rate under a small "
+            "number of allowed guesses."
         )
 
     return f"""
-**Attack conclusion for {pin_length}-digit {model} model**
+**Attack conclusion for 6-digit {model} model**
 
 - Shannon entropy: **{shannon:.4f} bits**
-- Min-entropy: **{min_entropy:.4f} bits**
+- Min-entropy: **{min_ent:.4f} bits**
 - Expected guesses: **{expected:.2f}**
 - Strongest Top-10 attack: **{best_attack}**
 - Top-10 success rate: **{best_success:.4f}** ({best_success * 100:.2f}%)
@@ -671,14 +204,17 @@ def generate_attack_conclusion(
 """
 
 
-def generate_defense_conclusion(
-    defense_result: dict,
-    blacklist_size: int
-) -> str:
-    original = float(defense_result["Original Top-10 Success Rate"])
-    new = float(defense_result["New Top-10 Success Rate"])
-    abs_reduction = float(defense_result["Absolute Reduction"])
-    rel_reduction = float(defense_result["Relative Reduction"])
+def generate_defense_conclusion(defense_df: pd.DataFrame, blacklist_size: int) -> str:
+    row = defense_df[defense_df["Blacklist Size"] == blacklist_size]
+    if row.empty:
+        row = defense_df.iloc[-1]
+    else:
+        row = row.iloc[0]
+
+    original = float(row["Original Top-10 Success Rate"])
+    new = float(row["New Top-10 Success Rate"])
+    abs_red = float(row["Absolute Reduction"])
+    rel_red = float(row["Relative Reduction"])
 
     return f"""
 **Defense conclusion**
@@ -687,41 +223,246 @@ Using weak PIN blacklisting with the top **{blacklist_size}** most frequent PINs
 
 - Original Top-10 success rate: **{original:.4f}** ({original * 100:.2f}%)
 - New Top-10 success rate: **{new:.4f}** ({new * 100:.2f}%)
-- Absolute reduction: **{abs_reduction:.4f}**
-- Relative reduction: **{rel_reduction * 100:.2f}%**
+- Absolute reduction: **{abs_red:.4f}**
+- Relative reduction: **{rel_red * 100:.2f}%**
 
-This shows that blacklisting common weak PINs can significantly reduce guessability, especially for biased and leakage-based PIN distributions.
+Blacklisting common weak PINs can significantly reduce guessability, especially for biased and leakage-based PIN distributions.
 """
 
 
-def generate_final_recommendation(
-    pin_length: int,
+def compute_attempt_limit_from_topk(attack_results: dict, threshold: float = 0.05) -> int:
+    """
+    Method 1: Top-k success rate.
+    Find the first measured k where the strongest attack exceeds threshold.
+    Recommend k-1 as the safe limit.
+    """
+    max_at_k = {}
+    for k in K_VALUES:
+        key = f"Top-{k}"
+        max_at_k[k] = max(v.get(key, 0.0) for v in attack_results.values())
+    for k in sorted(max_at_k):
+        if max_at_k[k] >= threshold:
+            return max(k - 1, 0)
+    return max(K_VALUES)
+
+
+def compute_attempt_limit_from_expected_guesses(expected_guesses: float) -> int:
+    """
+    Method 2: Expected guesses.
+    Use 1% of expected guesses as a conservative bound, capped between 1 and 20.
+    """
+    return max(1, min(int(expected_guesses * 0.01), 20))
+
+
+def compute_attempt_limit_from_cumulative(
+    freq: pd.DataFrame,
+    leaked_candidates: list,
+    threshold: float = 0.05,
+    max_k: int = 30,
+) -> tuple:
+    """
+    Method 3: Cumulative success curve.
+    Compute exact cumulative success for each attack at k=1..max_k.
+    Returns (curves_dict, limits_dict, worst_case_limit).
+    """
+    from src.attack import (
+        build_frequency_ranked_guess_order,
+        build_rule_based_guess_order,
+        build_random_guess_order,
+        build_leakage_guess_order,
+        _get_distribution_dict,
+        _normalize_pin,
+    )
+
+    distribution = _get_distribution_dict(freq)
+
+    def cumulative(order):
+        return [
+            sum(distribution.get(_normalize_pin(p), 0.0) for p in order[:k])
+            for k in range(1, max_k + 1)
+        ]
+
+    curves = {
+        "Frequency-Ranked": cumulative(build_frequency_ranked_guess_order(freq)),
+        "Rule-Based":        cumulative(build_rule_based_guess_order(freq)),
+        "Leakage-Assisted":  cumulative(build_leakage_guess_order(freq, leaked_candidates)),
+        "Random":            cumulative(build_random_guess_order(distribution, seed=42)),
+    }
+
+    def safe_limit(curve):
+        for k, val in enumerate(curve, start=1):
+            if val >= threshold:
+                return k - 1
+        return max_k
+
+    limits = {name: safe_limit(c) for name, c in curves.items()}
+    return curves, limits, min(limits.values())
+
+
+def plot_cumulative_curves_inline(curves: dict, threshold: float, model: str) -> None:
+    colors = {
+        "Frequency-Ranked": "#e74c3c",
+        "Rule-Based":        "#e67e22",
+        "Leakage-Assisted":  "#8e44ad",
+        "Random":            "#95a5a6",
+    }
+    max_k = len(next(iter(curves.values())))
+    x = list(range(1, max_k + 1))
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for name, vals in curves.items():
+        ax.plot(x, [v * 100 for v in vals],
+                label=name, color=colors.get(name), linewidth=2)
+    ax.axhline(y=threshold * 100, color="#27ae60", linestyle="--", linewidth=1.8,
+               label=f"Risk threshold ({threshold * 100:.0f}%)")
+    ax.set_title(f"Cumulative Attack Success vs. Number of Attempts — {model} model")
+    ax.set_xlabel("Number of Attempts (k)")
+    ax.set_ylabel("Cumulative Success Rate (%)")
+    ax.legend()
+    ax.grid(True, alpha=0.25)
+    ax.set_xlim(1, max_k)
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def render_final_recommendation(
     model: str,
-    attack_df: pd.DataFrame,
-    defense_result: dict
-) -> str:
-    best_attack, best_success = get_best_attack(attack_df, "Top-10 Success Rate")
-    new_success = float(defense_result["New Top-10 Success Rate"])
+    metrics: dict,
+    attack_results: dict,
+    defense_df: pd.DataFrame,
+    blacklist_size: int,
+    leaked_candidates: list,
+    freq: pd.DataFrame,
+) -> None:
+    """
+    Section 5: Final Recommendation.
+    Combines attack/defense summary with attempt limit analysis
+    using three methods; takes the most conservative result.
+    """
+    THRESHOLD = 0.05  # fixed: >5% success rate is considered dangerous
 
-    if best_success >= 0.20:
-        limit_advice = "A strict attempt limit of around **3 to 5 attempts** is recommended."
-    elif best_success >= 0.05:
-        limit_advice = "A moderate attempt limit such as **5 attempts** is recommended."
+    best_attack, best_success = get_best_attack(attack_results, "Top-10")
+    expected = metrics["Expected Guesses"]
+
+    defense_row = defense_df[defense_df["Blacklist Size"] == blacklist_size]
+    defense_row = defense_row.iloc[0] if not defense_row.empty else defense_df.iloc[-1]
+    new_success = float(defense_row["New Top-10 Success Rate"])
+
+    # Three methods
+    limit_topk     = compute_attempt_limit_from_topk(attack_results, threshold=THRESHOLD)
+    limit_expected = compute_attempt_limit_from_expected_guesses(expected)
+    curves, limits_per_attack, limit_cumulative = compute_attempt_limit_from_cumulative(
+        freq, leaked_candidates, threshold=THRESHOLD
+    )
+
+    # Final: most conservative across all three
+    final_limit = max(min(limit_topk, limit_expected, limit_cumulative), 0)
+
+    if final_limit == 0:
+        verdict_icon, verdict = "⚠️", (
+            "Even **1 attempt** may already exceed the 5% risk threshold for the strongest "
+            "attack. This PIN distribution is critically weak. "
+            "Weak PIN blacklisting alone is insufficient — a very strict lockout policy is required."
+        )
+    elif final_limit <= 3:
+        verdict_icon, verdict = "🔴", (
+            f"The system should lock after **no more than {final_limit} attempt(s)**. "
+            f"Beyond this, the attacker's cumulative success exceeds 5%. "
+            f"Weak PIN blacklisting can reduce this risk further by removing the most predictable PINs."
+        )
+    elif final_limit <= 5:
+        verdict_icon, verdict = "🟠", (
+            f"A limit of **{final_limit} attempts** is the maximum safe setting for this distribution. "
+            f"Weak PIN blacklisting (evaluated in Section 4) can lower the success rate further, "
+            f"allowing a slightly more relaxed lockout policy."
+        )
     else:
-        limit_advice = "The attack success rate is low, but an attempt limit is still necessary."
+        verdict_icon, verdict = "🟢", (
+            f"The distribution tolerates up to **{final_limit} attempts** before the 5% threshold "
+            f"is reached. Combined with weak PIN blacklisting, this distribution is relatively "
+            f"resistant to low-attempt guessing attacks."
+        )
 
-    return f"""
-**Final recommendation**
+    st.markdown(f"""
+**Final Recommendation — 6-digit {model} model**
 
-For the **{pin_length}-digit {model}** setting, the strongest observed attack is **{best_attack}**.
+**Attack & defense summary**
+- Strongest Top-10 attack: **{best_attack}** ({best_success * 100:.2f}%)
+- After blacklisting top {blacklist_size} PINs: **{new_success * 100:.2f}%**
+- Expected guesses under optimal attack: **{expected:.2f}**
 
-Before defense, the Top-10 success rate is **{best_success * 100:.2f}%**.  
-After weak PIN blacklisting, the Top-10 success rate becomes **{new_success * 100:.2f}%**.
+---
 
-Therefore, the system should avoid allowing many repeated attempts. {limit_advice}
+**Attempt limit analysis** *(risk threshold: >5% attacker success = unacceptable)*
 
-The result supports the thesis argument that PIN security should not be evaluated only by theoretical key-space size. Practical guessability, user bias, and personal-information leakage must also be considered.
-"""
+| Method | Recommended limit |
+|--------|------------------|
+| Top-k success rate (from measured k values) | {limit_topk} attempt(s) |
+| Expected guesses (1% of {expected:.0f}) | {limit_expected} attempt(s) |
+| Cumulative success curve (exact per-attempt) | {limit_cumulative} attempt(s) |
+| **→ Final recommendation (most conservative)** | **{final_limit} attempt(s)** |
+
+{verdict_icon} {verdict}
+""")
+
+    st.markdown("**Cumulative success curve by attack strategy:**")
+    plot_cumulative_curves_inline(curves, THRESHOLD, model)
+
+    limit_rows = [
+        {"Attack Strategy": name, "Safe Attempt Limit": lim if lim > 0 else "< 1"}
+        for name, lim in limits_per_attack.items()
+    ]
+    st.dataframe(pd.DataFrame(limit_rows), use_container_width=True)
+
+    st.caption(
+        "Risk threshold is fixed at 5%. The final limit is the minimum across all three "
+        "analysis methods, ensuring the most conservative and defensible recommendation."
+    )
+
+
+
+
+# ============================================================
+# Core Experiment Runner
+# ============================================================
+
+def run_experiment(model: str, dob: str, n: int, seed: int, use_survey_weights: bool, blacklist_size: int) -> dict:
+    """Run one full experiment using src/ pipeline — consistent with main.py."""
+    ensure_dirs()
+
+    # 1. Generate pins
+    pins = generate_dataset(n=n, model=model, seed=seed, dob=dob, use_survey_weights=use_survey_weights)
+
+    # 2. Save dataset, compute frequency via src/analysis.py
+    data_path = os.path.join(DATA_DIR, f"generated_{model}_pins.csv")
+    save_dataset(pins, data_path)
+    freq = compute_frequency(data_path)
+
+    freq_path = os.path.join(RESULTS_DIR, f"frequency_{model}.csv")
+    freq.to_csv(freq_path, index=False)
+
+    # 3. Security metrics
+    metrics = compute_security_metrics(freq)
+
+    # 4. Attacks
+    leaked_candidates = dob_to_candidate_pins(dob)
+    attack_results = evaluate_all_attacks(freq, leaked_candidates=leaked_candidates, k_values=K_VALUES, seed=seed)
+
+    # 5. Defense
+    defense_df = run_weak_pin_blacklisting_study(freq=freq, model_name=model, blacklist_sizes=BLACKLIST_SIZES, k=10)
+    defense_path = os.path.join(RESULTS_DIR, f"app_defense_{model}.csv")
+    defense_df.to_csv(defense_path, index=False)
+
+    return {
+        "experiment_name": f"6-digit {model}",
+        "model": model,
+        "freq": freq,
+        "metrics": metrics,
+        "attack_results": attack_results,
+        "defense_df": defense_df,
+        "leaked_candidates": leaked_candidates,
+        "blacklist_size": blacklist_size,
+        "saved_files": {"data_path": data_path, "freq_path": freq_path, "defense_path": defense_path},
+    }
 
 
 # ============================================================
@@ -730,54 +471,25 @@ The result supports the thesis argument that PIN security should not be evaluate
 
 st.sidebar.title("Experiment Configuration")
 
-pin_mode = st.sidebar.selectbox(
-    "Select PIN length",
-    [
-        "6-digit PIN only",
-        "4-digit PIN only",
-        "Both 4-digit and 6-digit"
-    ],
-    index=0
-)
-
 model_mode = st.sidebar.selectbox(
     "Select PIN model",
-    [
-        "All models",
-        "uniform",
-        "biased",
-        "leakage"
-    ],
-    index=0
+    ["All models", "uniform", "biased", "leakage"],
+    index=0,
 )
 
-dob = st.sidebar.text_input(
-    "Date of Birth for leakage model",
-    value=DEFAULT_DOB,
-    help="Format: YYYY-MM-DD"
+dob = st.sidebar.text_input("Date of Birth (leakage model)", value=DEFAULT_DOB, help="Format: YYYY-MM-DD")
+
+n = st.sidebar.number_input("Dataset size", min_value=1000, max_value=1000000, value=DEFAULT_N, step=1000)
+
+seed = st.sidebar.number_input("Random seed", min_value=0, max_value=999999, value=DEFAULT_SEED, step=1)
+
+use_survey_weights = st.sidebar.checkbox(
+    "Use survey-based weights",
+    value=True,
+    help="Makes biased and leakage models more realistic based on survey data.",
 )
 
-n = st.sidebar.number_input(
-    "Dataset size",
-    min_value=1000,
-    max_value=1000000,
-    value=DEFAULT_N,
-    step=1000
-)
-
-seed = st.sidebar.number_input(
-    "Random seed",
-    min_value=0,
-    max_value=999999,
-    value=DEFAULT_SEED,
-    step=1
-)
-
-blacklist_size = st.sidebar.selectbox(
-    "Defense blacklist size used for conclusion",
-    BLACKLIST_SIZES,
-    index=3
-)
+blacklist_size = st.sidebar.selectbox("Defense blacklist size (for conclusion)", BLACKLIST_SIZES, index=3)
 
 run_button = st.sidebar.button("Run Experiment", type="primary")
 
@@ -787,12 +499,12 @@ run_button = st.sidebar.button("Run Experiment", type="primary")
 # ============================================================
 
 st.title("PIN Security Analysis System")
-st.markdown(
-    """
-This application demonstrates low-entropy attacks on PINs by comparing uniform, biased, and leakage-based PIN models.
-It also evaluates a simple defense strategy: **weak PIN blacklisting**.
-"""
-)
+st.markdown("""
+This application demonstrates low-entropy attacks on **6-digit PINs** by comparing
+uniform, biased, and leakage-based PIN models, and evaluates **weak PIN blacklisting** as a defense.
+
+> Uses the same `src/` pipeline as `main.py` — results are fully consistent.
+""")
 
 
 # ============================================================
@@ -801,11 +513,9 @@ It also evaluates a simple defense strategy: **weak PIN blacklisting**.
 
 if run_button:
     try:
-        ensure_dirs()
-        safe_parse_dob(dob)
+        datetime.strptime(dob, "%Y-%m-%d")
 
-        pin_lengths = get_pin_lengths_from_mode(pin_mode)
-        models = get_models_from_mode(model_mode)
+        models = ["uniform", "biased", "leakage"] if model_mode == "All models" else [model_mode]
 
         st.session_state.experiment_results = []
         st.session_state.summary_df = pd.DataFrame()
@@ -816,93 +526,36 @@ if run_button:
         all_defense_rows = []
 
         with st.spinner("Running experiment..."):
-            for pin_length in pin_lengths:
-                for model in models:
-                    pins = generate_dataset(
-                        n=int(n),
-                        model=model,
-                        pin_length=pin_length,
-                        seed=int(seed),
-                        dob=dob
-                    )
+            for model in models:
+                result = run_experiment(
+                    model=model, dob=dob, n=int(n), seed=int(seed),
+                    use_survey_weights=use_survey_weights, blacklist_size=int(blacklist_size),
+                )
 
-                    freq = compute_frequency_from_pins(pins)
-                    metrics = compute_security_metrics(freq, pin_length)
+                metrics = result["metrics"]
+                attack_results = result["attack_results"]
+                defense_df = result["defense_df"]
 
-                    attack_df = evaluate_all_attacks(
-                        freq=freq,
-                        pin_length=pin_length,
-                        dob=dob,
-                        seed=int(seed),
-                        k_values=K_VALUES
-                    )
+                summary_row = {
+                    "Experiment": result["experiment_name"],
+                    "Model": model,
+                    "Shannon Entropy (bits)": metrics["Shannon Entropy (bits)"],
+                    "Min-Entropy (bits)": metrics["Min-Entropy (bits)"],
+                    "Expected Guesses": metrics["Expected Guesses"],
+                }
+                for attack_name, topk_dict in attack_results.items():
+                    for k in K_VALUES:
+                        summary_row[f"{attack_name} - Top-{k}"] = topk_dict.get(f"Top-{k}", 0.0)
 
-                    defense_curve_df, selected_defense_result = run_weak_pin_blacklisting_study(
-                        freq=freq,
-                        model=model,
-                        pin_length=pin_length,
-                        blacklist_sizes=BLACKLIST_SIZES,
-                        k=10
-                    )
-
-                    experiment_name = f"{pin_length}-digit {model}"
-
-                    data_path = os.path.join(DATA_DIR, f"generated_{pin_length}digit_{model}_pins.csv")
-                    freq_path = os.path.join(RESULTS_DIR, f"frequency_{pin_length}digit_{model}.csv")
-                    attack_path = os.path.join(RESULTS_DIR, f"attack_{pin_length}digit_{model}.csv")
-                    defense_path = os.path.join(RESULTS_DIR, f"defense_{pin_length}digit_{model}.csv")
-
-                    save_dataset(pins, data_path)
-                    save_dataframe(freq, freq_path)
-                    save_dataframe(attack_df, attack_path)
-                    save_dataframe(defense_curve_df, defense_path)
-
-                    summary_row = {
-                        "Experiment": experiment_name,
-                        "PIN Length": pin_length,
-                        "Model": model,
-                        "Shannon Entropy (bits)": metrics["Shannon Entropy (bits)"],
-                        "Min-Entropy (bits)": metrics["Min-Entropy (bits)"],
-                        "Expected Guesses": metrics["Expected Guesses"],
-                        "Max Probability": metrics["Max Probability"],
-                    }
-
-                    for _, row in attack_df.iterrows():
-                        attack_name = row["Attack Strategy"]
-                        for k in K_VALUES:
-                            metric_name = f"Top-{k} Success Rate"
-                            summary_row[f"{attack_name} - {metric_name}"] = row[metric_name]
-
-                    all_summary_rows.append(summary_row)
-                    all_defense_rows.extend(defense_curve_df.to_dict("records"))
-
-                    st.session_state.experiment_results.append({
-                        "experiment_name": experiment_name,
-                        "pin_length": pin_length,
-                        "model": model,
-                        "pins": pins,
-                        "freq": freq,
-                        "metrics": metrics,
-                        "attack_df": attack_df,
-                        "defense_curve_df": defense_curve_df,
-                        "defense_result": selected_defense_result,
-                        "blacklist_size": int(blacklist_size),
-                        "saved_files": {
-                            "data_path": data_path,
-                            "freq_path": freq_path,
-                            "attack_path": attack_path,
-                            "defense_path": defense_path,
-                        }
-                    })
+                all_summary_rows.append(summary_row)
+                all_defense_rows.extend(defense_df.to_dict("records"))
+                st.session_state.experiment_results.append(result)
 
         summary_df = pd.DataFrame(all_summary_rows)
         defense_summary_df = pd.DataFrame(all_defense_rows)
 
-        summary_path = os.path.join(RESULTS_DIR, "summary_all_models.csv")
-        defense_summary_path = os.path.join(RESULTS_DIR, "defense_summary_all_models.csv")
-
-        save_dataframe(summary_df, summary_path)
-        save_dataframe(defense_summary_df, defense_summary_path)
+        summary_df.to_csv(os.path.join(RESULTS_DIR, "app_summary_all_models.csv"), index=False)
+        defense_summary_df.to_csv(os.path.join(RESULTS_DIR, "app_defense_all_models.csv"), index=False)
 
         st.session_state.summary_df = summary_df
         st.session_state.defense_summary_df = defense_summary_df
@@ -910,157 +563,122 @@ if run_button:
 
         st.success("Experiment completed successfully.")
 
+    except ValueError as ve:
+        st.error(f"Invalid input: {ve}")
     except Exception as e:
         st.error(f"Error: {e}")
 
 
 # ============================================================
-# Display Results from Session State
+# Display Results
 # ============================================================
 
 if st.session_state.has_run and st.session_state.experiment_results:
+
     st.header("Overall Summary")
 
     if not st.session_state.summary_df.empty:
         st.dataframe(st.session_state.summary_df, use_container_width=True)
-
         col_a, col_b = st.columns(2)
-
         with col_a:
             plot_entropy_summary(st.session_state.summary_df)
-
         with col_b:
             plot_min_entropy_summary(st.session_state.summary_df)
-
         plot_expected_guesses_summary(st.session_state.summary_df)
 
     if not st.session_state.defense_summary_df.empty:
-        st.subheader("Defense Summary")
+        st.subheader("Defense Summary (All Models)")
         st.dataframe(st.session_state.defense_summary_df, use_container_width=True)
 
     for result in st.session_state.experiment_results:
         experiment_name = result["experiment_name"]
-        pin_length = result["pin_length"]
         model = result["model"]
         freq = result["freq"]
         metrics = result["metrics"]
-        attack_df = result["attack_df"]
-        defense_curve_df = result["defense_curve_df"]
-        defense_result = result["defense_result"]
+        attack_results = result["attack_results"]
+        defense_df = result["defense_df"]
+        bsize = result["blacklist_size"]
         saved_files = result["saved_files"]
 
         st.markdown("---")
         st.header(experiment_name)
 
+        # 1. Security Metrics
         st.subheader("1. Security Metrics")
-
-        col1, col2, col3, col4 = st.columns(4)
-
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric(
-                "Shannon Entropy",
-                f"{metrics['Shannon Entropy (bits)']:.4f} bits"
-            )
-
+            st.metric("Shannon Entropy", f"{metrics['Shannon Entropy (bits)']:.4f} bits")
         with col2:
-            st.metric(
-                "Min-Entropy",
-                f"{metrics['Min-Entropy (bits)']:.4f} bits"
-            )
-
+            st.metric("Min-Entropy", f"{metrics['Min-Entropy (bits)']:.4f} bits")
         with col3:
-            st.metric(
-                "Expected Guesses",
-                f"{metrics['Expected Guesses']:.2f}"
-            )
+            st.metric("Expected Guesses", f"{metrics['Expected Guesses']:.2f}")
 
-        with col4:
-            st.metric(
-                "Max Probability",
-                f"{metrics['Max Probability']:.4f}"
-            )
-
+        # 2. Top 10 PINs
         st.subheader("2. Top 10 Most Common PINs")
         st.dataframe(freq.head(10), use_container_width=True)
+        plot_top_pins(freq, title=f"Top 10 Most Common PINs — {experiment_name}")
 
-        plot_top_pins(
-            freq=freq,
-            title=f"Top 10 Most Common PINs - {experiment_name}",
-            top_n=10
-        )
-
+        # 3. Attack Results
         st.subheader("3. Attack Success Comparison")
-        st.dataframe(attack_df, use_container_width=True)
+        attack_rows = []
+        for attack_name, topk_dict in attack_results.items():
+            row = {"Attack Strategy": attack_name}
+            for k in K_VALUES:
+                row[f"Top-{k}"] = topk_dict.get(f"Top-{k}", 0.0)
+            attack_rows.append(row)
+        attack_display_df = pd.DataFrame(attack_rows)
+        st.dataframe(attack_display_df, use_container_width=True)
 
-        selected_metric = st.selectbox(
-            f"Select Top-k metric for {experiment_name}",
-            [f"Top-{k} Success Rate" for k in K_VALUES],
+        selected_k = st.selectbox(
+            f"Select Top-k metric to visualize — {experiment_name}",
+            [f"Top-{k}" for k in K_VALUES],
             index=3,
-            key=f"metric_selector_{pin_length}_{model}"
+            key=f"metric_selector_{model}",
         )
+        plot_attack_results(attack_results, selected_k)
+        st.markdown(generate_attack_conclusion(model, metrics, attack_results))
 
-        plot_attack_results(attack_df, selected_metric)
-
-        st.markdown(
-            generate_attack_conclusion(
-                pin_length=pin_length,
-                model=model,
-                metrics=metrics,
-                attack_df=attack_df
-            )
-        )
-
+        # 4. Defense Study
         st.subheader("4. Defense Study: Weak PIN Blacklisting")
-        st.dataframe(defense_curve_df, use_container_width=True)
+        st.dataframe(defense_df, use_container_width=True)
+        plot_defense_curve(defense_df)
+        st.markdown(generate_defense_conclusion(defense_df, bsize))
 
-        plot_defense_curve(defense_curve_df)
-
-        st.markdown(
-            generate_defense_conclusion(
-                defense_result=defense_result,
-                blacklist_size=int(defense_result["Blacklist Size"])
-            )
-        )
-
+        # 5. Final Recommendation & Attempt Limit Analysis
         st.subheader("5. Final Recommendation")
-        st.markdown(
-            generate_final_recommendation(
-                pin_length=pin_length,
-                model=model,
-                attack_df=attack_df,
-                defense_result=defense_result
-            )
+        render_final_recommendation(
+            model=model,
+            metrics=metrics,
+            attack_results=attack_results,
+            defense_df=defense_df,
+            blacklist_size=bsize,
+            leaked_candidates=result["leaked_candidates"],
+            freq=freq,
         )
 
         st.info(
             f"Saved files: `{saved_files['data_path']}`, "
             f"`{saved_files['freq_path']}`, "
-            f"`{saved_files['attack_path']}`, "
             f"`{saved_files['defense_path']}`"
         )
 
 else:
     st.info("Configure the experiment in the sidebar, then click **Run Experiment**.")
-
-    st.markdown(
-        """
+    st.markdown("""
 ### What this app does
 
-This app runs an interactive PIN security experiment.
+This app runs an interactive PIN security experiment using the same `src/` pipeline as `main.py`.
 
 It supports:
 
-- **4-digit PINs**
-- **6-digit PINs**
-- **Uniform model**
-- **Biased model**
-- **Leakage model**
+- **Uniform model** — ideal random baseline
+- **Biased model** — human PIN selection behavior  
+- **Leakage model** — attacker knows date of birth
 - **Random attack**
 - **Frequency-ranked attack**
 - **Rule-based attack**
 - **Leakage-assisted attack**
 - **Weak PIN blacklisting defense**
 
-The main thesis still focuses on **6-digit PINs**, while the 4-digit option is useful as an additional demonstration of DOB-based weakness.
-"""
-    )
+The thesis focuses on **6-digit PINs only**.
+""")

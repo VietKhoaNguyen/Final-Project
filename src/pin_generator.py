@@ -87,14 +87,22 @@ def get_default_biased_weights() -> Dict[str, float]:
 
 def get_survey_based_weights() -> Dict[str, float]:
     """
-    Approximate from survey:
-    - date-related ≈ 47%
-    - repeated ≈ 15%
-    - sequential ≈ 11%
-    - random ≈ 14%
-    - cultural/significant ≈ 12%
+    Weights manually derived by inspecting the anonymous survey responses
+    collected in survey/Survey_result.csv (142 responses).
 
-    We split date-related into birthdate + anniversary + year_based.
+    The survey asked participants which strategy they use when choosing a 6-digit PIN.
+    The observed distribution was:
+        - date-related (birthday + anniversary combined) ≈ 47%  (31.7% birthday + 14.8% anniversary)
+        - repeated digits                                ≈ 15%  (14.8%)
+        - sequential digits                              ≈ 11%  (11.3%)
+        - random / no pattern                            ≈ 14%  (14.1%)
+        - cultural or personally significant numbers     ≈ 12%  (12.0%)
+
+    The date-related 47% is split across three sub-categories:
+        birthdate (26%), anniversary (11%), year_based (10%).
+
+    Note: these weights are hardcoded constants derived from manual inspection
+    of the survey results. The CSV file is not read at runtime.
     """
     return {
         "birthdate": 0.26,

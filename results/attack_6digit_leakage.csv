@@ -1,5 +1,0 @@
-Attack Strategy,Top-1 Success Rate,Top-3 Success Rate,Top-5 Success Rate,Top-10 Success Rate
-Random,0.0,0.0,0.0,0.0
-Frequency-Ranked,0.06043,0.18084,0.3007,0.59545
-Rule-Based,0.01233,0.03605,0.06084,0.12118
-Leakage-Assisted,0.0592,0.17945,0.29810000000000003,0.59545

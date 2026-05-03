@@ -7,16 +7,27 @@ __pycache__/
 # Virtual environment
 venv/
 .env/
+env/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Data files (optional, if file is large)
+# Generated datasets (large, reproducible via main.py --seed 42)
 data/*.csv
+
+# Generated results (reproducible via main.py)
+results/*.csv
+results/*.png
+results/figures/
+
+# App-specific temp outputs
+app_defense_*.csv
+app_summary_*.csv
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# VS Code
+# IDE
 .vscode/
+.idea/
