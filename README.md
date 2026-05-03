@@ -115,15 +115,26 @@ Final_Project/
 │   ├── summary_leakage.csv
 │   ├── summary_all_models.csv
 │   ├── defense_weak_blacklisting.csv
-│   └── figures/
+│   └── (plots as .png files)
 │
 ├── png/
+│   └── (UML diagram images)
+│
+├── survey/
+│   ├── Survey_result.csv
+│   └── Survey_result.pdf
 │
 ├── main.py
 ├── app.py
-├── README.md
-└── requirements.txt
+├── references.bib
+├── requirements.txt
+├── .gitignore
+└── README.md
 ```
+
+> Note: `data/` and `results/` are listed in `.gitignore` because all files inside are
+> reproducible by running `python main.py --seed 42`. They are generated locally and not
+> committed to the repository.
 
 ---
 
@@ -150,7 +161,14 @@ This is the main experimental pipeline. It controls the full workflow of the pro
 
 ### app.py
 
-This file provides an interactive web application built with Streamlit. It allows users to explore the project results and run simulations through a browser-based interface without using the command line.
+This file provides an interactive web application built with Streamlit. It imports and uses the same pipeline as `main.py` via the `src/` modules, so all results are fully consistent.
+
+The app allows users to:
+
+- select the PIN model and configuration;
+- run the full experiment interactively;
+- view security metrics, top PINs, attack results, and defense results;
+- view the attempt limit recommendation with cumulative success curves.
 
 ---
 
@@ -164,13 +182,15 @@ This file contains the PIN generation logic. It supports three PIN generation mo
 
 It also contains helper functions for converting a date of birth into possible 6-digit PIN candidates. The biased and leakage models support both default weights and survey-based weights.
 
-The survey-based weights approximate real-world behavior:
+The survey-based weights were manually derived from the anonymous survey responses collected in `survey/Survey_result.csv` (142 responses). The observed distribution was:
 
-- date-related patterns: approximately 47% (split across birthdate, anniversary, year-based);
+- date-related patterns (birthday + anniversary): approximately 47%;
 - repeated digits: approximately 15%;
 - sequential digits: approximately 11%;
-- random: approximately 14%;
-- cultural or significant numbers: approximately 12%.
+- random or no pattern: approximately 14%;
+- cultural or personally significant numbers: approximately 12%.
+
+The date-related 47% is split across three sub-categories: birthdate (26%), anniversary (11%), and year-based (10%). These weights are hardcoded constants derived from manual inspection of the survey results. The CSV file is not read at runtime.
 
 ---
 
@@ -235,10 +255,44 @@ This file generates visualizations for the project. It creates the following plo
 3. expected guesses comparison across models;
 4. attack success comparison for Top-1, Top-3, Top-5, and Top-10;
 5. top-10 most common PINs per model;
-6. rank-probability curves per model;
-7. combined rank-probability curves across models;
-8. cumulative success curve for frequency-ranked attack (up to 1000 guesses);
-9. entropy versus Top-10 attack success scatter plot.
+6. rank-probability curves per model and combined;
+7. cumulative success curve (frequency-ranked attack, up to 1000 guesses);
+8. entropy versus Top-10 attack success scatter plot.
+
+---
+
+### survey/
+
+This folder contains the anonymous survey data used to ground the biased and leakage models in realistic user behavior.
+
+- `Survey_result.csv` — raw responses from 142 participants;
+- `Survey_result.pdf` — exported PDF version of the survey results.
+
+The survey asked participants which strategy they use when choosing a 6-digit PIN. No personally identifiable information was collected. The results were used to manually derive the survey-based weights in `src/pin_generator.py`.
+
+---
+
+### png/
+
+This folder contains UML diagram images used for thesis documentation. The diagrams include:
+
+1. Use Case Diagram
+2. Class Diagram
+3. System Architecture Diagram
+4. Activity Diagram - Generate PIN Distribution
+5. Activity Diagram - Run Attack Simulation
+6. Activity Diagram - Evaluation and Visualization
+7. Activity Diagram - Defense Study
+8. Sequence Diagram - Generate PIN Distribution
+9. Sequence Diagram - Run Attack Simulation
+10. Sequence Diagram - Leakage-Assisted Attack
+11. Sequence Diagram - Weak PIN Blacklisting Defense
+
+---
+
+### references.bib
+
+This file contains the BibTeX references used in the thesis. It includes all cited works on PIN security, guessability, entropy, and authentication guidelines.
 
 ---
 
@@ -324,8 +378,6 @@ The system generates DOB-related PIN candidates such as:
 
 These candidates are given higher priority in the leakage model.
 
-The leakage model is important because many users choose PINs related to personal information, and attackers may obtain such information from social media, public records, or prior knowledge.
-
 ---
 
 ## Attack Strategies
@@ -346,17 +398,13 @@ The frequency-ranked attack guesses PINs from the most frequent to the least fre
 
 ## 3. Rule-Based Attack
 
-The rule-based attack uses known human PIN selection rules. It prioritizes PINs in the following order: repeated digits, then sequential digits, then significant numbers, then date-like values, then all remaining PINs. Each category is internally sorted by frequency.
-
-This attack does not need the exact frequency table, but it exploits predictable human behavior.
+The rule-based attack uses known human PIN selection rules. It prioritizes PINs in the following order: repeated digits, then sequential digits, then significant numbers, then date-like values, then all remaining PINs sorted by frequency. This attack does not need the exact frequency table, but it exploits predictable human behavior.
 
 ---
 
 ## 4. Leakage-Assisted Attack
 
 The leakage-assisted attack uses personal information, especially date of birth. The attacker first generates DOB-based candidate PINs and prioritizes them by their observed probability. After exhausting the DOB candidates, the attack continues using frequency-ranked guessing.
-
-This attack represents a realistic threat model where the attacker knows some personal information about the victim.
 
 ---
 
@@ -366,9 +414,7 @@ This attack represents a realistic threat model where the attacker knows some pe
 
 ## Weak PIN Blacklisting
 
-The project includes one defense study: weak PIN blacklisting.
-
-The idea is simple: if some PINs are extremely common, the system can reject those PINs during PIN creation.
+The project includes one defense study: weak PIN blacklisting. The idea is simple: if some PINs are extremely common, the system can reject those PINs during PIN creation.
 
 For example, the system may blacklist:
 
@@ -397,13 +443,6 @@ The tested blacklist sizes are:
 100
 500
 ```
-
-The defense output includes for each blacklist size:
-
-- original Top-10 success rate;
-- new Top-10 success rate after blacklisting;
-- absolute reduction;
-- relative reduction.
 
 This defense is not a complete security solution. However, it is a practical and understandable mechanism for reducing the risk caused by very weak PIN choices.
 
@@ -525,13 +564,11 @@ This will run uniform, biased, and leakage models in sequence and generate all d
 
 ### Run One Model Only
 
-To run only one model:
-
 ```bash
 python main.py --run_mode one --model biased
 ```
 
-Available models are:
+Available models:
 
 ```
 uniform
@@ -599,8 +636,6 @@ The default dataset size is:
 python main.py --seed 123
 ```
 
-The random seed is used for reproducibility. Using the same seed should produce the same or very similar results.
-
 ---
 
 ### Use Survey-Based Weights
@@ -608,8 +643,6 @@ The random seed is used for reproducibility. Using the same seed should produce 
 ```bash
 python main.py --use_survey_weights
 ```
-
-Survey-based weights make the biased and leakage models more realistic by approximating observed real-world PIN selection behavior.
 
 ---
 
@@ -627,8 +660,6 @@ python main.py --no_defense
 python main.py --blacklist_sizes 10,50,100,500
 ```
 
-Blacklist sizes must be provided as a comma-separated list of integers.
-
 ---
 
 ### Run the Web Application
@@ -637,7 +668,7 @@ Blacklist sizes must be provided as a comma-separated list of integers.
 streamlit run app.py
 ```
 
-This launches the interactive Streamlit web application in your browser.
+This launches the interactive Streamlit web application in your browser. The app uses the same `src/` pipeline as `main.py`, so all results are fully consistent.
 
 ---
 
@@ -661,8 +692,6 @@ Each file contains generated 6-digit PIN samples with a single column named `pin
 
 ### Frequency Tables
 
-The frequency tables are saved in the `results` folder:
-
 ```
 results/frequency_uniform.csv
 results/frequency_biased.csv
@@ -675,17 +704,10 @@ Each frequency table contains the columns `pin`, `count`, and `probability`.
 
 ### Summary Files
 
-Each model has its own summary file:
-
 ```
 results/summary_uniform.csv
 results/summary_biased.csv
 results/summary_leakage.csv
-```
-
-The combined summary file is:
-
-```
 results/summary_all_models.csv
 ```
 
@@ -694,8 +716,6 @@ The summary files contain Shannon entropy, min-entropy, expected guesses, and To
 ---
 
 ### Defense Result File
-
-The weak PIN blacklisting defense results are saved as:
 
 ```
 results/defense_weak_blacklisting.csv
@@ -706,8 +726,6 @@ This file contains for each model and blacklist size: the model name, defense ty
 ---
 
 ### Plots
-
-The project generates the following plots saved in the `results` folder:
 
 ```
 results/plot_entropy_comparison.png
@@ -759,28 +777,6 @@ Weak PIN blacklisting reduces the success rate of frequency-ranked attacks by re
 
 ---
 
-## UML Diagrams
-
-The project includes UML diagrams saved in the `png` folder for system explanation and thesis documentation.
-
-The diagrams include:
-
-1. Use Case Diagram
-2. Class Diagram
-3. System Architecture Diagram
-4. Activity Diagram - Generate PIN Distribution
-5. Activity Diagram - Run Attack Simulation
-6. Activity Diagram - Evaluation and Visualization
-7. Activity Diagram - Defense Study
-8. Sequence Diagram - Generate PIN Distribution
-9. Sequence Diagram - Run Attack Simulation
-10. Sequence Diagram - Leakage-Assisted Attack
-11. Sequence Diagram - Weak PIN Blacklisting Defense
-
-These diagrams describe the system from different perspectives, including user interaction, system structure, workflow, and object communication.
-
----
-
 ## Key Findings
 
 The expected findings of this project are:
@@ -792,13 +788,13 @@ The expected findings of this project are:
 5. Rule-based attacks can exploit common human patterns without needing the full frequency table.
 6. Leakage-assisted attacks can significantly improve success when date-of-birth information is known.
 7. Weak PIN blacklisting can reduce attack success by removing the most predictable PINs.
-8. Entropy alone is useful but not sufficient; Top-k success rate provides a more practical view for this type of analysis.
+8. Entropy alone is not sufficient; Top-k success rate and expected guesses provide a more practical view of PIN security.
 
 ---
 
 ## Research Questions
 
-This project can answer the following research questions:
+This project addresses the following research questions:
 
 1. How much does human bias reduce the security of 6-digit PINs?
 2. How different is a biased PIN distribution from a uniform distribution?
@@ -819,7 +815,7 @@ The project uses:
 - numpy;
 - Streamlit (for the web application);
 - CSV files for storing datasets and results;
-- synthetic data generation;
+- synthetic data generation grounded in an anonymous survey;
 - UML diagrams for system modeling.
 
 ---
@@ -851,7 +847,7 @@ To reproduce the default experiment:
 python main.py --seed 42 --n 100000
 ```
 
-Using the same configuration helps ensure that the generated datasets and results are consistent across runs.
+Using the same configuration ensures that the generated datasets and results are consistent across runs.
 
 ---
 
@@ -861,6 +857,8 @@ This project is for academic and educational purposes only.
 
 It does not attack real users or real systems.
 
+The survey data was collected anonymously without any personally identifiable information.
+
 The goal is to understand why human-chosen PINs can be weak and how simple defenses may reduce risk.
 
 The code should not be used for unauthorized access, real account attacks, or malicious purposes.
@@ -869,9 +867,7 @@ The code should not be used for unauthorized access, real account attacks, or ma
 
 ## References
 
-The project is based on research related to PIN security, password guessability, and entropy.
-
-Main references include:
+The project is based on research related to PIN security, password guessability, and entropy. Full BibTeX references are available in `references.bib`.
 
 1. Ding Wang, Ping Wang, Jing-Hua Guo, and Zi-Wei Lan. Behind the PIN: An Analysis of 6-Digit PIN Selection and Guessability. ASIACCS, 2017.
 
@@ -881,7 +877,7 @@ Main references include:
 
 4. Claude E. Shannon. A Mathematical Theory of Communication. Bell System Technical Journal, 1948.
 
-5. National Institute of Standards and Technology. Digital Identity Guidelines: Authentication and Authenticator Management. NIST Special Publication 800-63B.
+5. National Institute of Standards and Technology. Digital Identity Guidelines: Authentication and Authenticator Management. NIST Special Publication 800-63B, 2024.
 
 ---
 
