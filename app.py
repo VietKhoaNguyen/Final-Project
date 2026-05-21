@@ -10,7 +10,13 @@ import streamlit as st
 # ============================================================
 
 from src.pin_generator import generate_dataset, dob_to_candidate_pins
-from src.analysis import compute_frequency, compute_security_metrics
+from src.analysis import (
+    compute_frequency_from_pins,
+    compute_security_metrics,
+    train_test_split_pins,
+    compute_test_distribution,
+    save_frequency,
+)
 from src.attack import evaluate_all_attacks
 from src.defense import run_weak_pin_blacklisting_study
 
@@ -257,12 +263,13 @@ def compute_attempt_limit_from_expected_guesses(expected_guesses: float) -> int:
 def compute_attempt_limit_from_cumulative(
     freq: pd.DataFrame,
     leaked_candidates: list,
+    test_distribution: dict,
     threshold: float = 0.05,
     max_k: int = 30,
 ) -> tuple:
     """
     Method 3: Cumulative success curve.
-    Compute exact cumulative success for each attack at k=1..max_k.
+    Rank order built from TRAIN freq; cumulative success evaluated on TEST distribution.
     Returns (curves_dict, limits_dict, worst_case_limit).
     """
     from src.attack import (
@@ -274,11 +281,11 @@ def compute_attempt_limit_from_cumulative(
         _normalize_pin,
     )
 
-    distribution = _get_distribution_dict(freq)
+    train_distribution = _get_distribution_dict(freq)
 
     def cumulative(order):
         return [
-            sum(distribution.get(_normalize_pin(p), 0.0) for p in order[:k])
+            sum(test_distribution.get(_normalize_pin(p), 0.0) for p in order[:k])
             for k in range(1, max_k + 1)
         ]
 
@@ -286,7 +293,7 @@ def compute_attempt_limit_from_cumulative(
         "Frequency-Ranked": cumulative(build_frequency_ranked_guess_order(freq)),
         "Rule-Based":        cumulative(build_rule_based_guess_order(freq)),
         "Leakage-Assisted":  cumulative(build_leakage_guess_order(freq, leaked_candidates)),
-        "Random":            cumulative(build_random_guess_order(distribution, seed=42)),
+        "Random":            cumulative(build_random_guess_order(train_distribution, seed=42)),
     }
 
     def safe_limit(curve):
@@ -332,13 +339,15 @@ def render_final_recommendation(
     blacklist_size: int,
     leaked_candidates: list,
     freq: pd.DataFrame,
+    test_distribution: dict,
 ) -> None:
     """
     Section 5: Final Recommendation.
     Combines attack/defense summary with attempt limit analysis
     using three methods; takes the most conservative result.
+    Train freq used for ranking; test_distribution used for cumulative evaluation.
     """
-    THRESHOLD = 0.05  # fixed: >5% success rate is considered dangerous
+    THRESHOLD = 0.05
 
     best_attack, best_success = get_best_attack(attack_results, "Top-10")
     expected = metrics["Expected Guesses"]
@@ -351,7 +360,7 @@ def render_final_recommendation(
     limit_topk     = compute_attempt_limit_from_topk(attack_results, threshold=THRESHOLD)
     limit_expected = compute_attempt_limit_from_expected_guesses(expected)
     curves, limits_per_attack, limit_cumulative = compute_attempt_limit_from_cumulative(
-        freq, leaked_candidates, threshold=THRESHOLD
+        freq, leaked_candidates, test_distribution=test_distribution, threshold=THRESHOLD
     )
 
     # Final: most conservative across all three
@@ -426,41 +435,61 @@ def render_final_recommendation(
 # ============================================================
 
 def run_experiment(model: str, dob: str, n: int, seed: int, use_survey_weights: bool, blacklist_size: int) -> dict:
-    """Run one full experiment using src/ pipeline — consistent with main.py."""
+    """Run one full experiment using src/ pipeline — consistent with main.py (80/20 train/test split)."""
     ensure_dirs()
 
     # 1. Generate pins
-    pins = generate_dataset(n=n, model=model, seed=seed, dob=dob, use_survey_weights=use_survey_weights)
+    pins = generate_dataset(
+        n=n, model=model, seed=seed, dob=dob,
+        use_survey_weights=use_survey_weights,
+        randomize_dob=True,
+    )
 
-    # 2. Save dataset, compute frequency via src/analysis.py
+    # 2. Save full dataset
     data_path = os.path.join(DATA_DIR, f"generated_{model}_pins.csv")
     save_dataset(pins, data_path)
-    freq = compute_frequency(data_path)
 
+    # 3. Train/test split (80/20) — same as main.py
+    train_pins, test_pins = train_test_split_pins(pins, train_ratio=0.80, seed=seed)
+
+    # 4. Build frequency from TRAIN set only
+    train_freq = compute_frequency_from_pins(train_pins)
     freq_path = os.path.join(RESULTS_DIR, f"frequency_{model}.csv")
-    freq.to_csv(freq_path, index=False)
+    save_frequency(train_freq, output_path=freq_path)
 
-    # 3. Security metrics
-    metrics = compute_security_metrics(freq)
+    # 5. Security metrics from TRAIN distribution
+    metrics = compute_security_metrics(train_freq)
 
-    # 4. Attacks
+    # 6. Test distribution for Top-k evaluation
+    test_dist = compute_test_distribution(test_pins)
+
+    # 7. Attacks: rank on TRAIN, evaluate on TEST
     leaked_candidates = dob_to_candidate_pins(dob)
-    attack_results = evaluate_all_attacks(freq, leaked_candidates=leaked_candidates, k_values=K_VALUES, seed=seed)
+    attack_results = evaluate_all_attacks(
+        train_freq_df=train_freq,
+        test_distribution=test_dist,
+        leaked_candidates=leaked_candidates,
+        k_values=K_VALUES,
+        seed=seed,
+    )
 
-    # 5. Defense
-    defense_df = run_weak_pin_blacklisting_study(freq=freq, model_name=model, blacklist_sizes=BLACKLIST_SIZES, k=10)
+    # 8. Defense on TRAIN distribution
+    defense_df = run_weak_pin_blacklisting_study(freq=train_freq, model_name=model, blacklist_sizes=BLACKLIST_SIZES, k=10)
     defense_path = os.path.join(RESULTS_DIR, f"app_defense_{model}.csv")
     defense_df.to_csv(defense_path, index=False)
 
     return {
         "experiment_name": f"6-digit {model}",
         "model": model,
-        "freq": freq,
+        "freq": train_freq,
         "metrics": metrics,
         "attack_results": attack_results,
         "defense_df": defense_df,
         "leaked_candidates": leaked_candidates,
         "blacklist_size": blacklist_size,
+        "train_size": len(train_pins),
+        "test_size": len(test_pins),
+        "test_distribution": test_dist,
         "saved_files": {"data_path": data_path, "freq_path": freq_path, "defense_path": defense_path},
     }
 
@@ -504,6 +533,7 @@ This application demonstrates low-entropy attacks on **6-digit PINs** by compari
 uniform, biased, and leakage-based PIN models, and evaluates **weak PIN blacklisting** as a defense.
 
 > Uses the same `src/` pipeline as `main.py` — results are fully consistent.
+> Frequency rankings are built on the **training set (80%)** and Top-k success rates are evaluated on the **test set (20%)**, avoiding evaluation leakage.
 """)
 
 
@@ -654,12 +684,13 @@ if st.session_state.has_run and st.session_state.experiment_results:
             blacklist_size=bsize,
             leaked_candidates=result["leaked_candidates"],
             freq=freq,
+            test_distribution=result["test_distribution"],
         )
 
         st.info(
-            f"Saved files: `{saved_files['data_path']}`, "
-            f"`{saved_files['freq_path']}`, "
-            f"`{saved_files['defense_path']}`"
+            f"Train/test split: **{result['train_size']:,}** train / **{result['test_size']:,}** test (80/20). "
+            f"Frequency ranking built on train set; Top-k success rates evaluated on test set. "
+            f"Saved: `{saved_files['data_path']}`, `{saved_files['freq_path']}`, `{saved_files['defense_path']}`"
         )
 
 else:
