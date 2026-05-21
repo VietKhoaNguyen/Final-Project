@@ -187,7 +187,7 @@ The survey-based weights were manually derived from the anonymous survey respons
 - date-related patterns (birthday + anniversary): approximately 47%;
 - repeated digits: approximately 15%;
 - sequential digits: approximately 11%;
-- random or no pattern: approximately 14%;
+- random or no pattern: approximately 15%;
 - cultural or personally significant numbers: approximately 12%.
 
 The date-related 47% is split across three sub-categories: birthdate (26%), anniversary (11%), and year-based (10%). These weights are hardcoded constants derived from manual inspection of the survey results. The CSV file is not read at runtime.
