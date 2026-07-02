@@ -898,3 +898,55 @@ By comparing uniform, biased, and leakage-based models, the project shows that g
 The weak PIN blacklisting defense study further shows that simple defensive rules can reduce the success of ranked attacks, although they cannot fully eliminate the risk of predictable PIN selection.
 
 ---
+
+## Update Log: Differences from the Submitted Paper
+
+This codebase has continued to evolve after the accompanying paper, *"Evaluating the
+Guessability of 6-Digit PINs under User Bias and Personal-Information Leakage,"* was
+submitted to and accepted by the Journal of Science and Technology on Information
+Security (Vietnam Information Security Association). Readers comparing this repository
+against the published paper should be aware of the following differences.
+
+### 1. Single-seed vs. multi-seed evaluation
+
+The submitted paper reports all Top-k success rates averaged over **20 random seeds**
+(mean ± standard deviation), following the protocol described in Section III-B of the
+paper. The current `main.py` / `app.py` pipeline in this repository runs a **single
+seed (default `42`)** per execution. The numbers in `results/summary_all_models.csv`
+therefore correspond to one specific train/test split rather than the multi-seed
+average reported in the paper (e.g., 19.87% vs. the paper's 19.73% ± 0.38% for the
+Biased Model's Frequency-Ranked Top-10 success).
+
+### 2. Leakage-Assisted attack: single-DOB demo vs. per-user evaluation
+
+This is the most significant methodological difference. The paper defines the
+Leakage-Assisted (LA) attack as a **per-user evaluation**: each user in the test set
+has their own date of birth, and the attacker's Top-k success is the fraction of test
+users whose own DOB-derived candidates contain their true PIN.
+
+The current `main.py` and `app.py` instead evaluate the LA attack against a **single
+fixed demo DOB** (`1998-03-05` by default) applied uniformly to the whole test
+distribution. This was simplified for the interactive Streamlit demo, where a single
+user enters one DOB to see a personalized risk report. As a result, the LA Top-10
+success rate currently computed by this code (~9.1% for the Leakage Model) does **not**
+match the per-user, population-level LA Top-10 rate reported in the paper (23.92%).
+Reproducing the paper's exact LA figures requires the per-user evaluation loop used in
+the original experiment scripts, not the single-DOB demo path in this repository.
+
+### 3. Defense study baseline: training set vs. test set
+
+The "Original Top-10 Success Rate" column in `results/defense_weak_blacklisting.csv`
+is computed directly on the **training-set frequency table** (see `src/defense.py`),
+not the held-out test set used elsewhere in the pipeline. This explains why the
+Biased Model's defense baseline (19.72%) differs slightly from the Frequency-Ranked
+Top-10 rate reported in the main results table (19.87%, test-set) and in the paper
+(19.73% ± 0.38%, multi-seed test-set average). Both numbers are valid; they simply
+measure success on different data splits and should not be treated as inconsistent.
+
+### 4. Status
+
+This repository reflects the **post-submission, demo-oriented version** of the project
+(including the Streamlit app, attempt-limit recommendations, and survey-based weight
+calibration), refined for thesis defense and interactive presentation. The paper
+itself was finalized and accepted prior to these demo-focused changes and remains the
+authoritative source for the formally reported, multi-seed experimental results.
