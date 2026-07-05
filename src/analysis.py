@@ -6,34 +6,31 @@ from typing import Tuple
 # Frequency Computation
 # ============================================================
 
-def compute_frequency(file_path: str) -> pd.DataFrame:
-    df = pd.read_csv(file_path, dtype={"pin": str})
-    df["pin"] = df["pin"].str.zfill(6)
+def compute_frequency(file_path: str) -> pd.DataFrame: # builds a frequency table from a CSV file of PINs
+    df = pd.read_csv(file_path, dtype={"pin": str}) # load the CSV, forcing the pin column to be read as string (avoids losing leading zeros)
+    df["pin"] = df["pin"].str.zfill(6) # zero-pad every pin to exactly 6 digits
 
-    freq = df["pin"].value_counts().reset_index()
-    freq.columns = ["pin", "count"]
-    freq["probability"] = freq["count"] / len(df)
-    return freq
+    freq = df["pin"].value_counts().reset_index() # count occurrences of each unique pin, turn into a DataFrame
+    freq.columns = ["pin", "count"] # rename the resulting columns to "pin" and "count"
+    freq["probability"] = freq["count"] / len(df) # compute each pin's probability as its share of the total dataset
+    return freq # return the frequency table with pin, count, and probability columns
 
+def save_frequency(freq_df: pd.DataFrame, output_path: str = "results/frequency.csv") -> None: # writes a frequency table to disk
+    freq_df.to_csv(output_path, index=False) # save as CSV, omitting the row index
 
-def save_frequency(freq_df: pd.DataFrame, output_path: str = "results/frequency.csv") -> None:
-    freq_df.to_csv(output_path, index=False)
-
-
-def print_top_pins(freq_df: pd.DataFrame, k: int = 10) -> None:
-    print(f"\nTop {k} most common PINs:")
-    print(freq_df.head(k))
-
+def print_top_pins(freq_df: pd.DataFrame, k: int = 10) -> None: # prints the k most common PINs to the console
+    print(f"\nTop {k} most common PINs:") # header line
+    print(freq_df.head(k)) # print the first k rows (assumes freq_df is already sorted by frequency)s
 
 # ============================================================
 # Train/Test Split
 # ============================================================
 
 def train_test_split_pins(
-    pins: list,
-    train_ratio: float = 0.80,
-    seed: int = 42
-) -> Tuple[list, list]:
+    pins: list, # full list of generated PIN strings
+    train_ratio: float = 0.80, # fraction of data to allocate to the training set
+    seed: int = 42 # random seed controlling the shuffle, for reproducibility
+) -> Tuple[list, list]: 
     """
     Split a list of PIN strings into train and test sets.
 
@@ -56,39 +53,36 @@ def train_test_split_pins(
     -------
     train_pins, test_pins : tuple of lists
     """
-    import random
-    rng = random.Random(seed)
-    shuffled = pins[:]
-    rng.shuffle(shuffled)
-    split = int(len(shuffled) * train_ratio)
-    return shuffled[:split], shuffled[split:]
-
+    import random # local import of the RNG module, scoped to this function
+    rng = random.Random(seed) # create a seeded random number generator instance
+    shuffled = pins[:] # make a shallow copy of the pins list so the original is not mutated
+    rng.shuffle(shuffled) # randomly shuffle the copied list in place
+    split = int(len(shuffled) * train_ratio) # compute the index that divides train and test portions
+    return shuffled[:split], shuffled[split:] # return the first part as train set, the rest as test set
 
 def compute_frequency_from_pins(pins: list) -> pd.DataFrame:
     """
     Build a frequency table directly from a list of PIN strings,
     without requiring an intermediate CSV file.
     """
-    import pandas as pd
-    from collections import Counter
-    counts = Counter(str(p).zfill(6) for p in pins)
-    total  = len(pins)
-    rows   = [{"pin": pin, "count": cnt, "probability": cnt / total}
-              for pin, cnt in counts.items()]
-    freq   = pd.DataFrame(rows).sort_values("probability", ascending=False).reset_index(drop=True)
-    return freq
-
+    import pandas as pd # local import of pandas, scoped to this function
+    from collections import Counter # local import of Counter, scoped to this function
+    counts = Counter(str(p).zfill(6) for p in pins) # count occurrences of each normalized (zero-padded) PIN
+    total  = len(pins) # total number of PINs in the input list
+    rows   = [{"pin": pin, "count": cnt, "probability": cnt / total} # build one row dict per unique pin
+              for pin, cnt in counts.items()] # iterate over each unique pin and its count
+    freq   = pd.DataFrame(rows).sort_values("probability", ascending=False).reset_index(drop=True) # build DataFrame, sort by probability descending, reset index
+    return freq # return the resulting frequency table
 
 def compute_test_distribution(test_pins: list) -> dict:
     """
     Build a probability distribution dict from the test set.
     Used as the evaluation target for Top-k success rate computation.
     """
-    from collections import Counter
-    counts = Counter(str(p).zfill(6) for p in test_pins)
-    total  = len(test_pins)
-    return {pin: cnt / total for pin, cnt in counts.items()}
-
+    from collections import Counter # local import of Counter, scoped to this function
+    counts = Counter(str(p).zfill(6) for p in test_pins) # count occurrences of each normalized (zero-padded) test PIN 
+    total  = len(test_pins) # total number of PINs in the test set
+    return {pin: cnt / total for pin, cnt in counts.items()} # convert counts into a pin->probability dict
 
 # ============================================================
 # Security Metrics
@@ -103,9 +97,8 @@ def shannon_entropy(freq_df: pd.DataFrame) -> float:
     Note: this is the empirical entropy of the generated sample, not the
     theoretical entropy of the 6-digit PIN space (log2(10^6) ≈ 19.93 bits).
     """
-    probabilities = freq_df["probability"]
-    return -sum(p * math.log2(p) for p in probabilities if p > 0)
-
+    probabilities = freq_df["probability"] # extract the probability column as a Series
+    return -sum(p * math.log2(p) for p in probabilities if p > 0) # compute -sum(p*log2(p)) over all nonzero probabilities
 
 def min_entropy(freq_df: pd.DataFrame) -> float:
     """
@@ -114,9 +107,8 @@ def min_entropy(freq_df: pd.DataFrame) -> float:
     Measures worst-case predictability based on the most probable PIN
     in the sampled distribution.
     """
-    max_p = freq_df["probability"].max()
-    return -math.log2(max_p)
-
+    max_p = freq_df["probability"].max() # find the highest single-PIN probability in the distribution
+    return -math.log2(max_p) # compute min-entropy as negative log2 of that maximum probability
 
 def expected_guesses(freq_df: pd.DataFrame) -> float:
     """
@@ -128,25 +120,23 @@ def expected_guesses(freq_df: pd.DataFrame) -> float:
     This measures the average number of guesses needed to find the target PIN
     if the attacker guesses in frequency-ranked order.
     """
-    sorted_df = freq_df.sort_values(
-        by="probability", ascending=False
-    ).reset_index(drop=True)
-    sorted_df["rank"] = sorted_df.index + 1
-    return (sorted_df["probability"] * sorted_df["rank"]).sum()
+    sorted_df = freq_df.sort_values( # sort the frequency table
+        by="probability", ascending=False # by probability, highest first (optimal guessing order)
+    ).reset_index(drop=True) # reset the row index after sorting
+    sorted_df["rank"] = sorted_df.index + 1 # assign rank 1, 2, 3... based on the new sorted position
+    return (sorted_df["probability"] * sorted_df["rank"]).sum() # sum of (probability * rank) across all PINs, i.e. expected guess count
 
-
-def compute_security_metrics(freq_df: pd.DataFrame) -> dict:
+def compute_security_metrics(freq_df: pd.DataFrame) -> dict: # bundles all three security metrics into one dict
     return {
-        "Shannon Entropy (bits)": shannon_entropy(freq_df),
-        "Min-Entropy (bits)":     min_entropy(freq_df),
-        "Expected Guesses":       expected_guesses(freq_df),
+        "Shannon Entropy (bits)": shannon_entropy(freq_df), # overall uncertainty/randomness of the distribution
+        "Min-Entropy (bits)":     min_entropy(freq_df), # worst-case predictability metric
+        "Expected Guesses":       expected_guesses(freq_df), # average number of guesses needed under optimal strategy
     }
 
-
-def print_security_metrics(metrics: dict) -> None:
-    print("\nSecurity Metrics:")
-    for name, value in metrics.items():
-        if "Guesses" in name:
-            print(f"  {name}: {value:.2f}")
-        else:
-            print(f"  {name}: {value:.4f} bits")
+def print_security_metrics(metrics: dict) -> None: # pretty-prints a security metrics dict to the console
+    print("\nSecurity Metrics:") # header line
+    for name, value in metrics.items(): # iterate over each metric name/value pair
+        if "Guesses" in name: # if this metric is the expected-guesses count
+            print(f"  {name}: {value:.2f}") # print with 2 decimal places (it's a guess count, not bits)
+        else: # otherwise it's an entropy metric measured in bits
+            print(f"  {name}: {value:.4f} bits") # print with 4 decimal places and a "bits" unit label
