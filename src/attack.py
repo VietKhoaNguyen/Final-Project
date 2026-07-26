@@ -170,7 +170,7 @@ def leakage_assisted_attack_success(
     }
 
 # ============================================================
-# Public API
+# Public API (func intended tobe used by other modules)
 # ============================================================
 
 def evaluate_all_attacks(

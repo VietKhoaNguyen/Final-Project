@@ -1,2 +1,2 @@
 Model,Shannon Entropy (bits),Min-Entropy (bits),Expected Guesses,Random - Top-1,Random - Top-3,Random - Top-5,Random - Top-10,Frequency-Ranked - Top-1,Frequency-Ranked - Top-3,Frequency-Ranked - Top-5,Frequency-Ranked - Top-10,Rule-Based - Top-1,Rule-Based - Top-3,Rule-Based - Top-5,Rule-Based - Top-10,Leakage-Assisted - Top-1,Leakage-Assisted - Top-3,Leakage-Assisted - Top-5,Leakage-Assisted - Top-10
-biased,11.488045799021137,5.215579775382215,6651.616887499999,0.0,0.0009,0.00095,0.001,0.02745,0.082,0.1259,0.1987,0.02745,0.082,0.1259,0.1987,0.00065,0.00215,0.00215,0.12805
+biased,11.488045799021137,5.215579775382215,6651.616887499999,0.0,0.0011,0.0011,0.0011,0.02745,0.082,0.1259,0.1987,0.02745,0.082,0.1259,0.1987,0.00065,0.00215,0.00215,0.12805
